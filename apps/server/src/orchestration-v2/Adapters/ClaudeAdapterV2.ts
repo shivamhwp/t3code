@@ -275,7 +275,15 @@ export class ClaudeAgentSdkQueryRunnerError extends Schema.TaggedErrorClass<Clau
   },
 ) {
   override get message(): string {
-    return "Claude Agent SDK query failed.";
+    const detail =
+      this.cause instanceof Error
+        ? this.cause.message
+        : typeof this.cause === "string"
+          ? this.cause
+          : null;
+    return detail === null || detail.trim().length === 0
+      ? `Claude Agent SDK query failed (${this.method}).`
+      : `Claude Agent SDK query failed (${this.method}): ${detail}`;
   }
 }
 
@@ -2750,7 +2758,7 @@ export function makeClaudeAdapterV2(
               providerSessionId: input.providerSessionId,
               providerThreadId: context.input.providerThread.id,
               providerTurnId: context.providerTurnId,
-              cause,
+              cause: Cause.pretty(cause),
             });
           }
         });
