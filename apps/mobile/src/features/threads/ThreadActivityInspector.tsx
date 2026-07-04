@@ -1,14 +1,13 @@
 import * as Haptics from "expo-haptics";
 import { SymbolView } from "expo-symbols";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useRouter } from "expo-router";
+import { useNavigation } from "@react-navigation/native";
 import { useMemo, useState } from "react";
 import { Linking, Pressable, ScrollView, type ColorValue, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
 import type { ThreadFeedActivity } from "../../lib/threadActivity";
 import { buildThreadActivityInspector } from "../../lib/threadActivityInspector";
-import { buildThreadFilesNavigation } from "../../lib/routes";
 import { resolveWorkspaceRelativeFilePath } from "../files/filePath";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -20,7 +19,7 @@ export function ThreadActivityInspector(props: {
   readonly iconColor: ColorValue;
   readonly workspaceRoot?: string | null;
 }) {
-  const router = useRouter();
+  const navigation = useNavigation();
   const row = props.activity.projectedItem;
   const support = useV2ItemSupport({
     environmentId: props.environmentId,
@@ -92,13 +91,12 @@ export function ThreadActivityInspector(props: {
                 onPress={() => {
                   if (!relativePath) return;
                   void Haptics.selectionAsync();
-                  router.push(
-                    buildThreadFilesNavigation(
-                      { environmentId: props.environmentId, threadId: row.sourceThreadId },
-                      relativePath,
-                      link.line,
-                    ),
-                  );
+                  navigation.navigate("ThreadFile", {
+                    environmentId: String(props.environmentId),
+                    threadId: String(row.sourceThreadId),
+                    path: relativePath.split("/").filter((segment) => segment.length > 0),
+                    ...(link.line ? { line: String(link.line) } : {}),
+                  });
                 }}
                 className="min-h-9 flex-row items-center gap-2 rounded-md border border-neutral-300/50 px-2.5 py-1.5 dark:border-white/[0.1]"
               >

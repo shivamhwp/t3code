@@ -333,6 +333,19 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     },
     [props],
   );
+  const handleTabMouseDown = useCallback((event: ReactMouseEvent) => {
+    if (event.button !== 1) return;
+    event.preventDefault();
+  }, []);
+  const handleTabAuxClick = useCallback(
+    (event: ReactMouseEvent, surface: RightPanelSurface) => {
+      if (event.button !== 1) return;
+      event.preventDefault();
+      event.stopPropagation();
+      props.onCloseSurface(surface);
+    },
+    [props],
+  );
 
   useEffect(() => {
     const activeTab = tabListRef.current?.querySelector<HTMLElement>("[data-active-tab='true']");
@@ -370,6 +383,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                 <div
                   key={surface.id}
                   data-active-tab={active}
+                  onMouseDown={handleTabMouseDown}
+                  onAuxClick={(event) => handleTabAuxClick(event, surface)}
                   onContextMenu={(event) => void handleTabContextMenu(event, surface)}
                   className={cn(
                     "group flex h-7 min-w-25 max-w-44 shrink-0 items-center gap-1.5 rounded-md px-2 text-sm",

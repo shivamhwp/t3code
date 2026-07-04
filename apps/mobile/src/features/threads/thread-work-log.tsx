@@ -1,12 +1,11 @@
 import * as Haptics from "expo-haptics";
 import { SymbolView, type SFSymbol } from "expo-symbols";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { useRouter } from "expo-router";
+import { useNavigation } from "@react-navigation/native";
 import { LayoutAnimation, Pressable, useColorScheme, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
 import { cn } from "../../lib/cn";
-import { buildThreadRoutePath } from "../../lib/routes";
 import type { ThreadFeedActivity } from "../../lib/threadActivity";
 import { useV2ItemSupport } from "../../state/v2-item-support";
 import { ThreadActivityInspector } from "./ThreadActivityInspector";
@@ -85,7 +84,7 @@ function ThreadActivityThreadLink(props: {
     sourceThreadId: row.sourceThreadId,
     sourceItemId: row.sourceItemId,
   });
-  const router = useRouter();
+  const navigation = useNavigation();
   const item = row.item;
   let targetThreadId: ThreadId | null = null;
   let label = "Open related thread";
@@ -112,12 +111,10 @@ function ThreadActivityThreadLink(props: {
       accessibilityLabel={label}
       onPress={() => {
         void Haptics.selectionAsync();
-        router.push(
-          buildThreadRoutePath({
-            environmentId: props.environmentId,
-            threadId: targetThreadId,
-          }),
-        );
+        navigation.navigate("Thread", {
+          environmentId: props.environmentId,
+          threadId: targetThreadId,
+        });
       }}
       className="mx-2 mb-2 min-h-9 flex-row items-center justify-center gap-1.5 rounded-lg border border-neutral-300/50 px-2 dark:border-white/[0.08]"
     >

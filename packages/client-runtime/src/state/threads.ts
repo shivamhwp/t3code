@@ -22,20 +22,11 @@ import { parseThreadKey, threadKey } from "./entities.ts";
 import { applyOrchestrationV2ProjectionEvent } from "./orchestrationV2Projection.ts";
 import { THREAD_STATE_IDLE_TTL_MS } from "./threadRetention.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
-
-export type EnvironmentThreadStatus = "empty" | "cached" | "synchronizing" | "live" | "deleted";
-
-export interface EnvironmentThreadState {
-  readonly data: Option.Option<OrchestrationV2ThreadProjection>;
-  readonly status: EnvironmentThreadStatus;
-  readonly error: Option.Option<string>;
-}
-
-export const EMPTY_ENVIRONMENT_THREAD_STATE: EnvironmentThreadState = {
-  data: Option.none(),
-  status: "empty",
-  error: Option.none(),
-};
+import {
+  EMPTY_ENVIRONMENT_THREAD_STATE,
+  type EnvironmentThreadState,
+  type EnvironmentThreadStatus,
+} from "./threadState.ts";
 
 function statusWithoutLiveData(
   data: Option.Option<OrchestrationV2ThreadProjection>,
@@ -257,3 +248,4 @@ export * from "./composerPathSearch.ts";
 export * from "./threadCommands.ts";
 export * from "./threadDetail.ts";
 export * from "./threadShell.ts";
+export * from "./threadState.ts";
