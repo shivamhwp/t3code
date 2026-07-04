@@ -25,6 +25,7 @@ import {
   type ModelSelection,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2ExecutionNode,
+  type OrchestrationV2PlanArtifact,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderFailure,
   type OrchestrationV2ProviderSession,
@@ -166,7 +167,7 @@ export const ClaudeProviderCapabilitiesV2 = {
   planning: {
     emitsPlanUpdated: false,
     emitsTodoList: false,
-    emitsProposedPlan: false,
+    emitsProposedPlan: true,
     supportsStructuredQuestions: false,
     planDeltasHaveItemIds: false,
   },
@@ -1146,11 +1147,14 @@ export function claudeRuntimeQueryPolicyForRuntimePolicy(
       : undefined;
 
   if (permissionMode === "plan") {
+    // The permission callback must be installed in plan mode: without it the
+    // SDK has no way to raise ExitPlanMode, so the model can never propose a
+    // plan and the plan interaction mode dead-ends in prose.
     return {
       permissionMode,
       ...(readOnlyTools === undefined ? {} : { tools: readOnlyTools }),
       ...(allowedTools === undefined ? {} : { allowedTools }),
-      installPermissionCallback: false,
+      installPermissionCallback: true,
     };
   }
 
@@ -1169,9 +1173,6 @@ export function claudeRuntimeQueryPolicyForRuntimePolicy(
 }
 
 function shouldInstallClaudePermissionCallback(policy: ClaudeRuntimeQueryPolicy): boolean {
-  if (policy.permissionMode === "plan") {
-    return false;
-  }
   return policy.installPermissionCallback;
 }
 
@@ -2934,6 +2935,92 @@ export function makeClaudeAdapterV2(
           }
         });
 
+        const emitProposedPlanArtifacts = Effect.fnUntraced(function* (input: {
+          readonly context: ActiveClaudeTurnContext;
+          readonly nativeItemId: string;
+          readonly markdown: string;
+        }) {
+          const now = yield* DateTime.now;
+          const nativeItemId = `plan:${input.nativeItemId}`;
+          const planId = yield* idAllocator.allocate.plan({
+            threadId: input.context.input.threadId,
+            ...(input.context.input.runId === null ? {} : { runId: input.context.input.runId }),
+            driver: CLAUDE_PROVIDER,
+          });
+          const ordinal = yield* resolveItemOrdinal(input.context, nativeItemId);
+          const nodeId = idAllocator.derive.nodeFromProviderItem({
+            driver: CLAUDE_PROVIDER,
+            nativeItemId,
+          });
+          const nativeItemRef = {
+            driver: CLAUDE_PROVIDER,
+            nativeId: input.nativeItemId,
+            strength: "strong" as const,
+          };
+          const plan: OrchestrationV2PlanArtifact = {
+            id: planId,
+            threadId: input.context.input.threadId,
+            runId: input.context.input.runId,
+            nodeId,
+            kind: "proposed_plan",
+            status: "active",
+            markdown: input.markdown,
+          };
+          yield* emitProviderEvent({
+            type: "node.updated",
+            driver: CLAUDE_PROVIDER,
+            node: {
+              id: nodeId,
+              threadId: input.context.input.threadId,
+              runId: input.context.input.runId,
+              parentNodeId: input.context.input.rootNodeId,
+              rootNodeId: input.context.input.rootNodeId,
+              kind: "plan",
+              status: "completed",
+              countsForRun: false,
+              providerThreadId: input.context.input.providerThread.id,
+              providerTurnId: input.context.providerTurnId,
+              nativeItemRef,
+              runtimeRequestId: null,
+              checkpointScopeId: null,
+              startedAt: now,
+              completedAt: now,
+            },
+          });
+          yield* emitProviderEvent({
+            type: "plan.updated",
+            driver: CLAUDE_PROVIDER,
+            plan,
+          });
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver: CLAUDE_PROVIDER,
+            turnItem: {
+              id: idAllocator.derive.turnItemFromProviderItem({
+                driver: CLAUDE_PROVIDER,
+                nativeItemId,
+              }),
+              threadId: input.context.input.threadId,
+              runId: input.context.input.runId,
+              nodeId,
+              providerThreadId: input.context.input.providerThread.id,
+              providerTurnId: input.context.providerTurnId,
+              nativeItemRef,
+              parentItemId: null,
+              ordinal,
+              status: "completed",
+              title: null,
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              type: "proposed_plan",
+              planId,
+              markdown: input.markdown,
+              streaming: false,
+            },
+          });
+        });
+
         const canUseToolEffect = Effect.fn("ClaudeAdapterV2.canUseTool")(function* (
           toolName: Parameters<CanUseTool>[0],
           toolInput: Parameters<CanUseTool>[1],
@@ -2944,6 +3031,25 @@ export function makeClaudeAdapterV2(
             return {
               behavior: "deny",
               message: "Claude V2 adapter has no active turn for this tool request.",
+              toolUseID: callbackOptions.toolUseID,
+            } satisfies PermissionResult;
+          }
+
+          if (toolName === "ExitPlanMode" || toolName === "exit_plan_mode") {
+            // Plan proposals are approved through the app's plan card, not the
+            // SDK permission flow: capture the plan as a v2 artifact so the
+            // thread flips to Plan Ready, and keep the session in plan mode.
+            const planMarkdown = toolInput["plan"];
+            yield* emitProposedPlanArtifacts({
+              context,
+              nativeItemId: callbackOptions.toolUseID,
+              markdown: typeof planMarkdown === "string" ? planMarkdown : "",
+            });
+            return {
+              behavior: "deny",
+              message:
+                "The proposed plan has been shared with the user for review in the app. " +
+                "End the turn now; do not start implementing until the user approves the plan.",
               toolUseID: callbackOptions.toolUseID,
             } satisfies PermissionResult;
           }

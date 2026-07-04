@@ -209,6 +209,21 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
       installPermissionCallback: false,
     });
   });
+
+  it("installs the permission callback in plan mode so ExitPlanMode can propose plans", () => {
+    const queryPolicy = claudeRuntimeQueryPolicyForRuntimePolicy(
+      ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "plan",
+        cwd: "/workspace",
+      }),
+    );
+
+    assert.deepEqual(queryPolicy, {
+      permissionMode: "plan",
+      installPermissionCallback: true,
+    });
+  });
 });
 
 describe("ClaudeAdapterV2 native protocol logging", () => {
