@@ -45,7 +45,13 @@ export type AndroidAnchoredMenuProps = {
   readonly onPressAction?: MenuComponentProps["onPressAction"];
   /** Applied to the anchor wrapper — call sites flex these to fill toolbars. */
   readonly style?: StyleProp<ViewStyle>;
-  readonly children: ReactNode;
+  /**
+   * Plain children open the menu on tap (the wrapper owns the press). A
+   * render function keeps the children interactive and hands them `open` to
+   * call from their own gesture — e.g. a row that selects on tap and opens
+   * this menu on long-press.
+   */
+  readonly children: ReactNode | ((open: () => void) => ReactNode);
 };
 
 /**
@@ -145,15 +151,21 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
 
   return (
     <>
-      <Pressable
-        ref={anchorRef}
-        accessibilityRole="button"
-        collapsable={false}
-        style={props.style}
-        onPress={open}
-      >
-        <View pointerEvents="none">{props.children}</View>
-      </Pressable>
+      {typeof props.children === "function" ? (
+        <View ref={anchorRef} collapsable={false} style={props.style}>
+          {props.children(open)}
+        </View>
+      ) : (
+        <Pressable
+          ref={anchorRef}
+          accessibilityRole="button"
+          collapsable={false}
+          style={props.style}
+          onPress={open}
+        >
+          <View pointerEvents="none">{props.children}</View>
+        </Pressable>
+      )}
       <Modal
         visible={anchor !== null}
         transparent

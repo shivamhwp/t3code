@@ -1,5 +1,12 @@
 import { MenuView } from "@react-native-menu/menu";
-import type { ComponentProps, ReactNode } from "react";
+import * as Haptics from "expo-haptics";
+import {
+  cloneElement,
+  isValidElement,
+  type ComponentProps,
+  type ReactElement,
+  type ReactNode,
+} from "react";
 import { Platform, Pressable, useColorScheme, View } from "react-native";
 import { useThemeColor } from "../lib/useThemeColor";
 
@@ -87,6 +94,29 @@ export function ControlPillMenu(
   const isDarkMode = useColorScheme() === "dark";
 
   if (Platform.OS === "android") {
+    // Long-press menus keep their child interactive: the child element gets
+    // an injected onLongPress (mirroring the iOS context-menu interaction)
+    // so its own tap handling still works.
+    if (props.shouldOpenOnLongPress && isValidElement(props.children)) {
+      const child = props.children as ReactElement<{ onLongPress?: () => void }>;
+      return (
+        <AndroidAnchoredMenu
+          actions={props.actions}
+          title={props.title}
+          style={props.style}
+          onPressAction={props.onPressAction}
+        >
+          {(open) =>
+            cloneElement(child, {
+              onLongPress: () => {
+                void Haptics.selectionAsync();
+                open();
+              },
+            })
+          }
+        </AndroidAnchoredMenu>
+      );
+    }
     return (
       <AndroidAnchoredMenu
         actions={props.actions}

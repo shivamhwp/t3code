@@ -6,7 +6,7 @@ import type {
 import type { MenuAction } from "@react-native-menu/menu";
 import { SymbolView } from "../../components/AppSymbol";
 import { memo, useCallback, useMemo, type ComponentProps } from "react";
-import { Platform, Pressable, useWindowDimensions, View } from "react-native";
+import { Pressable, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 
 import { AppText as Text } from "../../components/AppText";
@@ -626,28 +626,23 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
       simultaneousWithExternalGesture={props.simultaneousSwipeGesture}
       threadTitle={thread.title}
     >
-      {(close) =>
-        // Android relies on swipe actions alone for now — the long-press
-        // popup duplicates them and Android's PopupMenu has no zoom-preview
-        // affordance, so the menu is disabled (not removed) there.
-        Platform.OS === "android" ? (
-          rowContent(close)
-        ) : (
-          // Messages-style row actions: a real UIContextMenuInteraction on
-          // long-press / pointer right-click, with the row as the zoom preview.
-          // Requires the patched @react-native-menu (see
-          // patches/@react-native-menu__menu@2.0.0.patch): in long-press mode
-          // the interaction is hosted by the component view and the underlying
-          // UIButton passes touches through, so row taps keep working.
-          <ControlPillMenu
-            actions={THREAD_ROW_MENU_ACTIONS}
-            onPressAction={handleMenuAction}
-            shouldOpenOnLongPress
-          >
-            {rowContent(close)}
-          </ControlPillMenu>
-        )
-      }
+      {(close) => (
+        // Messages-style row actions on long-press. iOS: a real
+        // UIContextMenuInteraction with the row as the zoom preview (needs the
+        // patched @react-native-menu, see
+        // patches/@react-native-menu__menu@2.0.0.patch — in long-press mode the
+        // interaction is hosted by the component view and the underlying
+        // UIButton passes touches through, so row taps keep working). Android:
+        // ControlPillMenu injects onLongPress into the row and anchors the
+        // token-styled dropdown to it; taps and swipes are untouched.
+        <ControlPillMenu
+          actions={THREAD_ROW_MENU_ACTIONS}
+          onPressAction={handleMenuAction}
+          shouldOpenOnLongPress
+        >
+          {rowContent(close)}
+        </ControlPillMenu>
+      )}
     </ThreadSwipeable>
   );
 });

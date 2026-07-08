@@ -22,9 +22,7 @@ function actionFailureMessage(action: ThreadListAction, cause: Cause.Cause<unkno
 }
 
 function selectionHaptic(): void {
-  if (process.env.EXPO_OS === "ios") {
-    void Haptics.selectionAsync();
-  }
+  void Haptics.selectionAsync();
 }
 
 function actionFailureTitle(action: ThreadListAction): string {

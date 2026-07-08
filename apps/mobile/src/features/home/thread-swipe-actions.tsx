@@ -197,7 +197,7 @@ export function ThreadSwipeable(props: {
     swipeableRef.current?.reset();
   }, [resetKey]);
   const handleFullSwipeArmedChange = useCallback((armed: boolean) => {
-    if (armed && !fullSwipeArmedRef.current && process.env.EXPO_OS === "ios") {
+    if (armed && !fullSwipeArmedRef.current) {
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
     fullSwipeArmedRef.current = armed;
