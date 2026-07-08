@@ -256,13 +256,17 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const fallbackInputRef = useRef<ComposerEditorHandle>(null);
   const inputRef = props.editorRef ?? fallbackInputRef;
   const [isFocused, setIsFocused] = useState(false);
+  // Android: expansion starts on touch-down. Waiting for the native focus
+  // event to round-trip through JS starts the 220ms morph after the IME is
+  // already animating in, so the two play serially and look jittery.
+  const [eagerExpand, setEagerExpand] = useState(false);
   const wasExpandedBeforePreviewRef = useRef(false);
   const inFlightThreadIdsRef = useRef(new Set<string>());
   const { onExpandedChange } = props;
 
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
   const hasContent = props.draftMessage.trim().length > 0 || props.draftAttachments.length > 0;
-  const isExpanded = isFocused || (Platform.OS === "android" && hasContent);
+  const isExpanded = isFocused || eagerExpand || (Platform.OS === "android" && hasContent);
   const canSend = hasContent;
 
   useEffect(() => {
@@ -294,6 +298,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
 
   const handleBlur = useCallback(() => {
     setIsFocused(false);
+    setEagerExpand(false);
     if (Platform.OS !== "android") {
       onExpandedChange?.(false);
     }
@@ -777,7 +782,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
             </Animated.View>
           ) : null}
 
-          <View style={isExpanded ? undefined : { flex: 1, minWidth: 0 }}>
+          <View
+            style={isExpanded ? undefined : { flex: 1, minWidth: 0 }}
+            onTouchStart={
+              Platform.OS === "android" && !isExpanded ? () => setEagerExpand(true) : undefined
+            }
+          >
             <ComposerEditor
               ref={inputRef}
               multiline
