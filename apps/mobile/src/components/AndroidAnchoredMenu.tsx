@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
 import { BackHandler, Pressable, ScrollView, StyleSheet, useColorScheme, View } from "react-native";
+import { useKeyboardState } from "react-native-keyboard-controller";
 import Animated, { FadeIn } from "react-native-reanimated";
 
 import { appBlurTargetRef } from "../lib/appBlurTarget";
@@ -78,6 +79,8 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
   const overlayRef = useRef<View>(null);
 
   const isDarkMode = useColorScheme() === "dark";
+  const keyboardVisible = useKeyboardState((state) => state.isVisible);
+  const keyboardHeight = useKeyboardState((state) => state.height);
   const rippleColor = useThemeColor("--color-subtle");
   const iconColor = useThemeColor("--color-icon");
   const iconSubtleColor = useThemeColor("--color-icon-subtle");
@@ -144,10 +147,15 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
           Math.max(preferredLeft, SCREEN_MARGIN),
           overlay.width - MENU_WIDTH - SCREEN_MARGIN,
         );
+  // The keyboard stays up while the menu is open (in-window overlay, no
+  // focus change), so the space it covers is not usable — without this the
+  // composer-pill menus "open down" into the IME and can't be tapped.
+  const usableBottom =
+    overlay === null ? 0 : overlay.height - (keyboardVisible ? keyboardHeight : 0);
   const spaceBelow =
     local === null || overlay === null
       ? 0
-      : overlay.height - (local.y + local.height) - ANCHOR_GAP - SCREEN_MARGIN;
+      : usableBottom - (local.y + local.height) - ANCHOR_GAP - SCREEN_MARGIN;
   const spaceAbove = local === null ? 0 : local.y - ANCHOR_GAP - SCREEN_MARGIN;
   const opensDown = spaceBelow >= 280 || spaceBelow >= spaceAbove;
   const maxHeight = Math.min(opensDown ? spaceBelow : spaceAbove, 480);
