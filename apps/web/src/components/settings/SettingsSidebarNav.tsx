@@ -1,4 +1,3 @@
-import { useAtomValue } from "@effect/atom-react";
 import {
   useCallback,
   useEffect,
@@ -22,11 +21,8 @@ import {
 } from "lucide-react";
 import { useCanGoBack, useNavigate } from "@tanstack/react-router";
 
-import { resolveShortcutCommand, shortcutLabelForCommand } from "../../keybindings";
-import { primaryServerKeybindingsAtom } from "../../state/server";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
-import { Kbd } from "../ui/kbd";
 import {
   SidebarContent,
   SidebarFooter,
@@ -63,14 +59,12 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const navigate = useNavigate();
   const canGoBack = useCanGoBack();
   const { isMobile, setOpenMobile } = useSidebar();
-  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [activeResultIndex, setActiveResultIndex] = useState(0);
   const results = useMemo(() => searchSettings(query), [query]);
   const isSearching = query.trim().length > 0;
   const hasResults = results.length > 0;
-  const searchShortcutLabel = shortcutLabelForCommand(keybindings, "commandPalette.toggle");
 
   useEffect(() => {
     const result = results[activeResultIndex];
@@ -79,20 +73,6 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
       .getElementById(`settings-search-result-${result.id}`)
       ?.scrollIntoView({ block: "nearest" });
   }, [activeResultIndex, results]);
-
-  useEffect(() => {
-    const focusSearch = (event: globalThis.KeyboardEvent) => {
-      if (event.defaultPrevented) return;
-      if (resolveShortcutCommand(event, keybindings) !== "commandPalette.toggle") return;
-      event.preventDefault();
-      event.stopPropagation();
-      searchInputRef.current?.focus();
-      searchInputRef.current?.select();
-    };
-
-    window.addEventListener("keydown", focusSearch, true);
-    return () => window.removeEventListener("keydown", focusSearch, true);
-  }, [keybindings]);
 
   const handleSectionClick = useCallback(
     (to: SettingsPath) => {
@@ -167,7 +147,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
     <>
       <SidebarContent className="overflow-x-hidden">
         <SidebarGroup className="gap-2 px-2 py-3">
-          <div className="flex h-8 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 focus-within:ring-offset-sidebar">
+          <div className="flex h-8 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground">
             <SearchIcon className="size-4 shrink-0 text-sidebar-muted-foreground/80" />
             <Input
               ref={searchInputRef}
@@ -207,10 +187,6 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
               >
                 <XIcon className="size-3" />
               </Button>
-            ) : searchShortcutLabel ? (
-              <Kbd className="h-4 min-w-0 shrink-0 rounded-sm bg-sidebar-control-surface px-1.5 text-[10px] text-sidebar-muted-foreground ring-1 ring-sidebar-border">
-                {searchShortcutLabel}
-              </Kbd>
             ) : null}
           </div>
           {isSearching && results.length === 0 ? (
