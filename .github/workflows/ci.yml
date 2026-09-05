@@ -90,6 +90,7 @@ jobs:
       # always runs in CI instead of silently no-oping.
       - name: Install C toolchain for process-tree fixtures
         run: |
+          sudo sed -i 's|http://|https://|g' /etc/apt/blacksmith-ubuntu-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends build-essential
           command -v cc
