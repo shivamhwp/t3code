@@ -28,6 +28,12 @@ jobs:
               - --filter=@t3tools/mobile...
       - name: Free disk
         run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/share/swift || true
+      - name: Point expo-widgets at the current peek package
+        run: |
+          for d in node_modules/.pnpm/expo-widgets@*/node_modules/expo-widgets/android/src; do
+            grep -rl 'io.github.jakex7.peek' "$d" | xargs -r sed -i 's/io\.github\.jakex7\.peek/io.github.expo.peek/g'
+          done
+          grep -rn 'jakex7' node_modules/.pnpm/expo-widgets@*/node_modules/expo-widgets/android/src || true
       - name: Prebuild
         working-directory: apps/mobile
         run: npx expo prebuild --platform android --no-install --clean
