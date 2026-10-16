@@ -1,0 +1,45 @@
+name: t3android dev client
+
+# Temporary: builds an Android dev client for current main without EAS, so the
+# corex phones can run main's JS. Lives only on a fork branch.
+on:
+  push:
+    branches: [t3android/devclient-build]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      APP_VARIANT: development
+      NODE_OPTIONS: --max-old-space-size=8192
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: "17"
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/mobile...
+      - name: Free disk
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/share/swift || true
+      - name: Prebuild
+        working-directory: apps/mobile
+        run: npx expo prebuild --platform android --no-install --clean
+      - name: Give the build its own package id
+        working-directory: apps/mobile/android
+        run: |
+          sed -i 's/applicationId "com.t3tools.t3code.dev"/applicationId "com.t3tools.t3code.devci"/' app/build.gradle
+          grep -n applicationId app/build.gradle
+      - name: Build debug APK
+        working-directory: apps/mobile/android
+        run: ./gradlew :app:assembleDebug -PreactNativeArchitectures=arm64-v8a --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: t3code-devci
+          path: apps/mobile/android/app/build/outputs/apk/debug/*.apk
