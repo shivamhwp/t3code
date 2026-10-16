@@ -34,14 +34,14 @@ jobs:
             grep -rl 'io.github.jakex7.peek' "$d" | xargs -r sed -i 's/io\.github\.jakex7\.peek/io.github.expo.peek/g'
           done
           grep -rn 'jakex7' node_modules/.pnpm/expo-widgets@*/node_modules/expo-widgets/android/src || true
+          # expo-modules-core 58.0.19 rejects classes without a constructor.
+          for f in node_modules/.pnpm/expo-widgets@*/node_modules/expo-widgets/android/src/main/java/expo/modules/widgets/WidgetsModule.kt; do
+            sed -i 's/    Class("CustomNotification", CustomNotification::class) {/    Class("CustomNotification", CustomNotification::class) {\n      Constructor { -> throw IllegalStateException("CustomNotification is not constructible") }/' "$f"
+            grep -n -A1 'Class("CustomNotification"' "$f"
+          done
       - name: Prebuild
         working-directory: apps/mobile
         run: npx expo prebuild --platform android --no-install --clean
-      - name: Give the build its own package id
-        working-directory: apps/mobile/android
-        run: |
-          sed -i 's/applicationId "com.t3tools.t3code.dev"/applicationId "com.t3tools.t3code.devci"/' app/build.gradle
-          grep -n applicationId app/build.gradle
       - name: Build debug APK
         working-directory: apps/mobile/android
         run: ./gradlew :app:assembleDebug -PreactNativeArchitectures=arm64-v8a --no-daemon
