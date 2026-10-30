@@ -1921,6 +1921,21 @@ describe("mobile composer drafts", () => {
     expect(moved.project).toEqual({ ...to, createdAt });
     expect(findNewTaskDraftKeys(appAtomRegistry.get(composerDraftsAtom), from)).toEqual([]);
     expect(findNewTaskDraftKeys(appAtomRegistry.get(composerDraftsAtom), to)).toEqual([key]);
+
+    const pullRequestSelection = {
+      mode: "worktree" as const,
+      branch: "feature/pr",
+      worktreePath: "/home/me/.t3/worktrees/repo/feature-pr",
+      startFromOrigin: false,
+      pullRequestReference: "https://github.com/acme/repo/pull/7",
+    };
+    updateComposerDraftSettings(key, { workspaceSelection: pullRequestSelection });
+    retargetNewTaskDraft(key, from, { keepPullRequestCheckout: true });
+    retargetNewTaskDraft(key, to, { keepPullRequestCheckout: true });
+    expect(getComposerDraftSnapshot(key).workspaceSelection).toEqual({
+      ...pullRequestSelection,
+      worktreePath: null,
+    });
   });
 
   it("merges persisted option memory without replacing newer choices", async () => {

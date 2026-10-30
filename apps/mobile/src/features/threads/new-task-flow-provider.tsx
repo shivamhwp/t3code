@@ -622,11 +622,14 @@ export function NewTaskFlowProvider(
     replaceComposerDraftAttachments(selectedProjectDraftKey, []);
   };
 
-  const carryDraftContentTo = (project: EnvironmentProject): string => {
+  const carryDraftContentTo = (
+    project: EnvironmentProject,
+    options?: { readonly keepPullRequestCheckout?: boolean },
+  ): string => {
     const target = { environmentId: project.environmentId, projectId: project.id };
     const current = readFlow().draftKey;
     if (current !== null && isNewTaskDraftKey(current)) {
-      retargetNewTaskDraft(current, target);
+      retargetNewTaskDraft(current, target, options);
       return current;
     }
     return createNewTaskDraft(target);
@@ -646,7 +649,10 @@ export function NewTaskFlowProvider(
       selectedProject,
     );
     updateFlow({
-      draftKey: match ? carryDraftContentTo(match) : readFlow().draftKey,
+      // The environment picker only offers hosts of the selected repository.
+      draftKey: match
+        ? carryDraftContentTo(match, { keepPullRequestCheckout: true })
+        : readFlow().draftKey,
       environmentId,
       projectKey: match ? scopedProjectKey(match.environmentId, match.id) : null,
     });

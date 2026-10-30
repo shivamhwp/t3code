@@ -1878,6 +1878,7 @@ export function createNewTaskDraft(project: {
 export function retargetNewTaskDraft(
   draftKey: string,
   project: { readonly environmentId: EnvironmentId; readonly projectId: ProjectId },
+  options?: { readonly keepPullRequestCheckout?: boolean },
 ): void {
   updateComposerDrafts((current) => {
     const existing = current[draftKey];
@@ -1889,7 +1890,12 @@ export function retargetNewTaskDraft(
     ) {
       return current;
     }
-    const { workspaceSelection: _workspaceSelection, ...retained } = normalizeDraft(existing);
+    const { workspaceSelection, ...retained } = normalizeDraft(existing);
+    // A PR checkout names a branch on the shared remote; worktree paths are machine-local.
+    const pullRequestSelection =
+      options?.keepPullRequestCheckout && workspaceSelection?.pullRequestReference !== undefined
+        ? { ...workspaceSelection, worktreePath: null }
+        : undefined;
     // Keep bytes across environment moves but drop server-specific upload stamps.
     const attachments = retained.attachments.map((attachment) =>
       attachment.uploadEnvironmentId !== undefined &&
@@ -1902,6 +1908,7 @@ export function retargetNewTaskDraft(
       [draftKey]: {
         ...retained,
         attachments,
+        ...(pullRequestSelection !== undefined ? { workspaceSelection: pullRequestSelection } : {}),
         project: {
           environmentId: project.environmentId,
           projectId: project.projectId,
