@@ -8,6 +8,7 @@ import {
   presentConnectionDiagnosis,
   type EnvironmentPresentation,
 } from "@t3tools/client-runtime/connection";
+import { Discovery } from "@t3tools/client-runtime/relay";
 import type { EnvironmentId } from "@t3tools/contracts";
 import Constants from "expo-constants";
 import { AsyncResult } from "effect/reactivity";
@@ -16,6 +17,7 @@ import { Linking, View } from "react-native";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import { environmentCatalog } from "../../connection/catalog";
+import { relayEnvironmentDiscovery } from "../../state/relay";
 import { cn } from "../../lib/cn";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 
@@ -31,6 +33,7 @@ export function useConnectionDiagnosis(
     useAtomValue(environmentCatalog.stateAtom(environmentId)),
     () => AVAILABLE_CONNECTION_STATE,
   );
+  const discovery = useAtomValue(relayEnvironmentDiscovery.stateValueAtom);
   if (presentation === null || !presentation.entry.enabled) return { diagnosis: null, state };
   const phase = presentation.connection.phase;
   if (phase === "connected" || phase === "unsupported") return { diagnosis: null, state };
@@ -40,6 +43,7 @@ export function useConnectionDiagnosis(
     hostLabel: presentation.entry.target.label,
     state,
     via: relayOnly ? "relay" : "direct",
+    relayRegistration: Discovery.relayEnvironmentRegistration(discovery, environmentId),
     clientVersion: Constants.expoConfig?.version,
     serverVersion: presentation.serverConfig?.environment.serverVersion,
   });

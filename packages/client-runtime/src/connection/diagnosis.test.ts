@@ -1,4 +1,5 @@
 import {
+  RelayEnvironmentConnectNotAuthorizedError,
   RelayEnvironmentEndpointUnavailableError,
   type RelayProtectedError,
 } from "@t3tools/contracts/relay";
@@ -139,5 +140,43 @@ describe("presentConnectionDiagnosis", () => {
       relayStatus: { status: "offline", endpointFailure: "tunnel_down", endpointStatus: 530 },
     });
     expect(diagnosis?.facts.map(([label]) => label)).not.toContain("HTTP status");
+  });
+
+  it("says a relay environment left the signed-in account only once the account list says so", () => {
+    const notLinked = backoff(
+      fromRelay(
+        new RelayEnvironmentConnectNotAuthorizedError({
+          code: "environment_connect_not_authorized",
+          reason: "environment_link_not_found",
+          traceId: "trace-1",
+        }),
+      ),
+    );
+    const present = (
+      relayRegistration: "registered" | "unregistered" | "unknown",
+      via: "relay" | "direct" = "relay",
+    ) =>
+      presentConnectionDiagnosis({
+        hostLabel: "Mac mini",
+        state: notLinked,
+        via,
+        relayRegistration,
+      });
+
+    const removed = present("unregistered");
+    expect(removed?.headline).toBe("Mac mini is no longer on your T3 Connect account");
+    expect(removed?.offerRemoval).toBe(true);
+    // Absence from this account does not prove the host is gone everywhere.
+    expect(removed?.steps.join(" ")).toContain("sign in to that account");
+
+    // Still listed, the list not loaded, or another route in use: the link itself is the problem.
+    for (const diagnosis of [
+      present("registered"),
+      present("unknown"),
+      present("unregistered", "direct"),
+    ]) {
+      expect(diagnosis?.headline).toBe("Mac mini is not linked to your T3 Connect account");
+      expect(diagnosis?.offerRemoval).toBe(false);
+    }
   });
 });

@@ -5,6 +5,7 @@ import {
 import type { RelayEnvironmentStatusResponse } from "@t3tools/contracts/relay";
 import * as DateTime from "effect/DateTime";
 
+import type { RelayEnvironmentRegistration } from "../relay/discovery.ts";
 import type {
   ConnectionAttemptError,
   ConnectionFailureCause,
@@ -28,6 +29,8 @@ export interface ConnectionDiagnosis {
   readonly facts: ReadonlyArray<readonly [label: string, value: string]>;
   /** The troubleshooting guide section for this failure. Null for direct routes. */
   readonly moreInfoUrl: string | null;
+  /** Removing the saved environment from this device is the likely fix. */
+  readonly offerRemoval: boolean;
 }
 
 export interface ConnectionDiagnosisInput {
@@ -40,13 +43,21 @@ export interface ConnectionDiagnosisInput {
     RelayEnvironmentStatusResponse,
     "status" | "endpointFailure" | "endpointStatus" | "offlineReason"
   > | null;
+  /** Whether the signed-in account's environment list includes this environment. */
+  readonly relayRegistration?: RelayEnvironmentRegistration;
   readonly clientVersion?: string | undefined;
   readonly serverVersion?: string | null | undefined;
 }
 
 interface Located {
   readonly hop: ConnectionHop;
-  readonly cause: ConnectionFailureCause | "offline" | "outdated" | "released" | null;
+  readonly cause:
+    | ConnectionFailureCause
+    | "offline"
+    | "outdated"
+    | "released"
+    | "unregistered"
+    | null;
 }
 
 const NOT_ANSWERING: ReadonlySet<ConnectionFailureCause> = new Set([
@@ -63,6 +74,14 @@ function locate(input: ConnectionDiagnosisInput): Located | null {
     return { hop: "server", cause: "outdated" };
   }
   if (failure?.hop !== undefined) {
+    // Missing from the loaded list means deregistered from this account, not from every account.
+    if (
+      failure.failureCause === "not_linked" &&
+      input.via === "relay" &&
+      input.relayRegistration === "unregistered"
+    ) {
+      return { hop: failure.hop, cause: "unregistered" };
+    }
     return { hop: failure.hop, cause: failure.failureCause ?? null };
   }
   if (failure !== null) {
@@ -90,6 +109,8 @@ function headline(host: string, located: Located, failure: ConnectionAttemptErro
       return "This device's clock is off";
     case "not_linked":
       return `${host} is not linked to your T3 Connect account`;
+    case "unregistered":
+      return `${host} is no longer on your T3 Connect account`;
     case "relay_error":
       return "T3 Connect returned an error";
     case "tunnel_pending":
@@ -149,6 +170,11 @@ function steps(host: string, located: Located, failure: ConnectionAttemptError |
       return [
         "Check that this device is signed in to the same T3 Connect account as the host.",
         `On ${host}, open Settings > Sharing & access and turn T3 Connect on.`,
+      ];
+    case "unregistered":
+      return [
+        `If ${host} was deregistered or T3 Code was reinstalled on it, remove this saved copy from this device.`,
+        "If it belongs to another T3 Connect account, sign in to that account on this device.",
       ];
     case "tunnel_pending":
       return ["Wait a minute. T3 Code retries on its own.", checkHost];
@@ -221,6 +247,7 @@ function helpSection(
     case "clock_skew":
       return "the-clock-is-off";
     case "not_linked":
+    case "unregistered":
     case "tunnel_not_enabled":
       return "sign-in-account-or-link-problems";
     case "relay_error":
@@ -330,6 +357,7 @@ export function presentConnectionDiagnosis(
     steps: steps(host, located, failure),
     facts,
     moreInfoUrl: relayPath ? t3ConnectTroubleshootingUrl(helpSection(located, failure)) : null,
+    offerRemoval: located.cause === "unregistered",
   };
 }
 

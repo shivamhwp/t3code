@@ -7,6 +7,7 @@ import {
   hasRelayRoute,
   presentConnectionDiagnosis,
 } from "@t3tools/client-runtime/connection";
+import { Discovery } from "@t3tools/client-runtime/relay";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { ChevronRightIcon } from "lucide-react";
@@ -32,7 +33,8 @@ export function useConnectionDiagnosis(environment: EnvironmentPresentation) {
     useAtomValue(environmentCatalog.stateAtom(environmentId)),
     () => AVAILABLE_CONNECTION_STATE,
   );
-  const relayStatus = useRelayEnvironmentDiscovery().environments.get(environmentId)?.status;
+  const discovery = useRelayEnvironmentDiscovery();
+  const relayStatus = discovery.environments.get(environmentId)?.status;
   const routes = connectionRoutes(environment.entry);
   const relayOnly = routes.length === 1 && hasRelayRoute(environment.entry);
   const phase = environment.connection.phase;
@@ -44,6 +46,7 @@ export function useConnectionDiagnosis(environment: EnvironmentPresentation) {
           via: relayOnly ? "relay" : "direct",
           // With a direct route as well, the relay's health says nothing about the route in use.
           relayStatus: relayOnly ? Option.getOrNull(relayStatus ?? Option.none()) : null,
+          relayRegistration: Discovery.relayEnvironmentRegistration(discovery, environmentId),
           clientVersion: APP_VERSION,
           serverVersion: environment.serverConfig?.environment.serverVersion,
         })
@@ -121,11 +124,13 @@ export function ConnectionDiagnosisPanel({
   diagnosis,
   onRetry,
   onAddRoute,
+  onRemove,
 }: {
   readonly hostLabel: string;
   readonly diagnosis: ConnectionDiagnosis;
   readonly onRetry: () => void;
   readonly onAddRoute: (() => void) | null;
+  readonly onRemove: () => void;
 }) {
   const { copyToClipboard } = useCopyToClipboard({
     target: "connection diagnostics",
@@ -202,6 +207,11 @@ export function ConnectionDiagnosisPanel({
         {onAddRoute ? (
           <Button type="button" size="xs" variant="outline" onClick={onAddRoute}>
             Add direct route
+          </Button>
+        ) : null}
+        {diagnosis.offerRemoval ? (
+          <Button type="button" size="xs" variant="destructive-outline" onClick={onRemove}>
+            Remove from this device…
           </Button>
         ) : null}
       </div>

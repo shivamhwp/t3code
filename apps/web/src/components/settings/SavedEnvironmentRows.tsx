@@ -334,6 +334,7 @@ export function SavedBackendListRow({
               diagnosis={diagnosis}
               onRetry={() => void retryNow(environmentId)}
               onAddRoute={relayOnly ? () => onAddRoute(environment) : null}
+              onRemove={() => onRemove(environment)}
             />
           ) : null}
           {routesOpen && (
