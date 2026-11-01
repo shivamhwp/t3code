@@ -463,11 +463,12 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
           : {}),
       })
     : manual;
-  // A native-looking launcher can still delegate to a mise-owned install.
+  // A native-looking launcher can still delegate to a mise- or Homebrew-owned install.
   if (
     nativeUpdate?.isCommandPath &&
     commandPaths.some(nativeUpdate.isCommandPath) &&
     !commandPaths.some(isMiseCommandPath) &&
+    !homebrewOwnershipFromCommandPath(context.realCommandPath) &&
     !(yield* isMiseWrapperScript(context))
   ) {
     return native;

@@ -1318,16 +1318,38 @@ it.layer(
       }),
   );
 
-  it.effect.skipIf(windowsHost)("upgrades with the keg's own brew when brew is not on PATH", () =>
-    Effect.gen(function* () {
+  it.effect.each([
+    {
+      case: "a formula",
+      definition: packageToolUpdate,
+      keg: ["Cellar", "package-tool", "1.0.0", "bin", "tool"],
+      nativeLink: null,
+      args: ["upgrade", "package-tool"],
+    },
+    {
+      case: "a cask behind a native-looking symlink",
+      definition: nativePackageToolUpdate,
+      keg: ["Caskroom", "native-package-tool@latest", "1.0.0", "native-package-tool"],
+      nativeLink: [".local", "bin", "native-package-tool"],
+      args: ["upgrade", "--cask", "native-package-tool@latest"],
+    },
+  ])("upgrades $case with the keg's own brew when brew is not on PATH", (fixture, { skip }) => {
+    if (windowsHost || (fixture.nativeLink && !symlinksSupported)) skip();
+    return Effect.gen(function* () {
       const tempDir = yield* makeTempDir("t3-homebrew-keg-brew");
       const brewPath = NodePath.join(tempDir, "bin", "brew");
       writeExecutable(brewPath);
-      const kegBinary = NodePath.join(tempDir, "Cellar", "package-tool", "1.0.0", "bin", "tool");
+      const kegBinary = NodePath.join(tempDir, ...fixture.keg);
       writeExecutable(kegBinary);
+      let binaryPath = kegBinary;
+      if (fixture.nativeLink) {
+        binaryPath = NodePath.join(tempDir, ...fixture.nativeLink);
+        NodeFS.mkdirSync(NodePath.dirname(binaryPath), { recursive: true });
+        NodeFS.symlinkSync(kegBinary, binaryPath);
+      }
 
-      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
-        binaryPath: kegBinary,
+      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(fixture.definition, {
+        binaryPath,
         env: { PATH: "" },
       }).pipe(
         Effect.provideService(HostProcess.Platform, "darwin"),
@@ -1339,11 +1361,11 @@ it.layer(
 
       expect(capabilities.update).toMatchObject({
         executable: brewPath,
-        args: ["upgrade", "package-tool"],
+        args: fixture.args,
         lockKey: "homebrew",
       });
-    }),
-  );
+    });
+  });
 
   it.effect("starts a fresh read instead of joining the resolution already running", () =>
     Effect.gen(function* () {
