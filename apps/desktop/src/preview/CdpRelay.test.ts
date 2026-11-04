@@ -164,9 +164,30 @@ describe("CDP relay extra sessions", () => {
     relay.receive(JSON.stringify({ id: 5, method: "Page.startScreencast", sessionId: extra }));
     await settle();
     expect(send).toHaveBeenLastCalledWith("Page.startScreencast", {}, undefined, extra);
-    written.length = 0;
-    relay.event("Page.screencastFrame", { data: "x" }, undefined);
-    expect(written.map((m) => m["sessionId"])).toEqual(["t3-preview-page", extra]);
+    // Each session gets only the frames of a screencast it started and has not stopped.
+    const frameSessions = () => {
+      written.length = 0;
+      relay.event("Page.screencastFrame", { data: "x" }, undefined);
+      return written.map((m) => m["sessionId"]);
+    };
+    expect(frameSessions()).toEqual([extra]);
+    relay.receive(
+      JSON.stringify({ id: 6, method: "Page.startScreencast", sessionId: "t3-preview-page" }),
+    );
+    relay.receive(JSON.stringify({ id: 7, method: "Page.stopScreencast", sessionId: extra }));
+    await settle();
+    expect(frameSessions()).toEqual(["t3-preview-page"]);
+    relay.receive(JSON.stringify({ id: 8, method: "Page.startScreencast", sessionId: extra }));
+    relay.receive(
+      JSON.stringify({
+        id: 9,
+        method: "Target.detachFromTarget",
+        params: { sessionId: extra },
+        sessionId: browserSession,
+      }),
+    );
+    await settle();
+    expect(frameSessions()).toEqual(["t3-preview-page"]);
   });
 });
 

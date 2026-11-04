@@ -39,6 +39,12 @@ export interface DesktopBrowserTabDebugger {
 
 const keyOf = ({ threadId, tabId }: DesktopBrowserTabKey) => `${threadId}\u0000${tabId}`;
 
+/** A session's screencast: it runs once a start succeeds, and counts while one is pending. */
+interface Screencast {
+  running: boolean;
+  starting: number;
+}
+
 interface AttachedTab {
   readonly key: DesktopBrowserTabKey;
   readonly debuggee: DesktopBrowserTabDebugger;
@@ -69,8 +75,10 @@ interface AttachedTab {
    */
   agentUsed: boolean;
   focusReleasing: boolean;
-  /** The sessions streaming the guest; one stopping leaves the others' screencasts running. */
-  readonly screencasts: Set<string | undefined>;
+  /** The sessions streaming the guest. Chromium runs one stream for all of them; the last ends it. */
+  readonly screencasts: Map<string | undefined, Screencast>;
+  /** Whether Chromium's stream started since it last stopped, so it can outlive its sessions. */
+  screencastStarted: boolean;
   readonly onMessage: (
     event: Electron.Event,
     method: string,
@@ -257,7 +265,7 @@ export const make = Effect.gen(function* () {
   /**
    * Chromium can leave a command unanswered, so the screenshot guard's release points
    * also end every hold: a released relay has no one waiting, and a new document answers
-   * nothing pending from the old one. A released relay's screencast has no viewer to stop it.
+   * nothing pending from the old one.
    */
   const dropFocusHolds = (tab: AttachedTab) => {
     tab.focusPending.clear();
@@ -265,16 +273,29 @@ export const make = Effect.gen(function* () {
     syncPainting(tab);
   };
 
+  /** Stops Chromium's stream once no session streams; `owned` means one just stopped streaming. */
+  const stopUnownedScreencast = (tab: AttachedTab, owned: boolean) => {
+    if (tab.screencasts.size > 0 || !(owned || tab.screencastStarted)) return;
+    tab.screencastStarted = false;
+    void tab.debuggee.debugger.sendCommand("Page.stopScreencast").catch(() => {});
+  };
+
+  const endScreencasts = (tab: AttachedTab) => {
+    const owned = tab.screencasts.size > 0;
+    tab.screencasts.clear();
+    stopUnownedScreencast(tab, owned);
+  };
+
   const dropRelay = (tab: AttachedTab) => {
     tab.relay = null;
-    tab.screencasts.clear();
+    endScreencasts(tab);
     tab.agentUsed = false;
     dropFocusHolds(tab);
   };
 
   /** A detached session, such as a closed viewer, waits on nothing it sent. */
   const dropSessionHolds = (tab: AttachedTab, owner: string) => {
-    tab.screencasts.delete(owner);
+    stopUnownedScreencast(tab, tab.screencasts.delete(owner));
     for (const [pending, hold] of tab.focusPending) {
       if (hold.owner === owner) tab.focusPending.delete(pending);
     }
@@ -309,13 +330,6 @@ export const make = Effect.gen(function* () {
     const relay: CdpRelayConnection = createCdpRelayConnection(
       {
         send: (method, params, sessionId, owner) => {
-          // A child session's screencast is not the page's, such as a late one on a detached session.
-          if (sessionId === undefined && method === "Page.startScreencast") {
-            tab.screencasts.add(owner);
-            if (owner !== undefined) streamingOwners.add(owner);
-          } else if (sessionId === undefined && method === "Page.stopScreencast") {
-            tab.screencasts.delete(owner);
-          }
           // A person's input through a viewer, or Playwright's own housekeeping, is not the agent's.
           if (
             AGENT_INPUT_METHOD.test(method) &&
@@ -324,31 +338,66 @@ export const make = Effect.gen(function* () {
             tab.agentUsed = true;
           }
           // Waits for focus emulation; insertText and other non-CDP input would not queue behind it.
-          const forward = (current?: () => boolean) => {
+          const forward = (
+            current?: () => boolean,
+            deliver = () => send(method, params, sessionId),
+          ) => {
             const change = tab.focusChange;
             const run = () =>
               tab.relay === relay && (current === undefined || current())
-                ? send(method, params, sessionId)
+                ? deliver()
                 : Promise.reject(new Error("The page this screenshot was for has moved on."));
             return change === null ? run() : change.then(run);
           };
-          return method === "Page.captureScreenshot"
-            ? takeScreenshot(
-                tab,
-                relay,
-                () => owner === undefined || !detachedOwners.has(owner),
-                (current, held) =>
-                  held ? holdFocus(tab, method, owner, () => forward(current)) : forward(current),
-              )
-            : method === "Page.startScreencast"
-              ? holdFocus(tab, method, owner, forward).catch((cause: unknown) => {
-                  // A viewer can outlive a refused stream; nothing is streaming for it.
-                  if (sessionId === undefined && tab.relay === relay) tab.screencasts.delete(owner);
-                  releaseFocusWhenIdle(tab);
-                  syncPainting(tab);
-                  throw cause;
-                })
-              : holdFocus(tab, method, owner, forward);
+          if (method === "Page.captureScreenshot") {
+            return takeScreenshot(
+              tab,
+              relay,
+              () => owner === undefined || !detachedOwners.has(owner),
+              (current, held) =>
+                held ? holdFocus(tab, method, owner, () => forward(current)) : forward(current),
+            );
+          }
+          // A child session's screencast is not the page's, such as a late one on a detached session.
+          if (sessionId === undefined && method === "Page.startScreencast") {
+            if (owner !== undefined) streamingOwners.add(owner);
+            const screencast = tab.screencasts.get(owner) ?? { running: false, starting: 0 };
+            screencast.starting += 1;
+            tab.screencasts.set(owner, screencast);
+            // A stop, detach or release since then ends this screencast; its late reply changes nothing.
+            const current = () => tab.screencasts.get(owner) === screencast;
+            return holdFocus(tab, method, owner, () => forward(current)).then(
+              (result) => {
+                if (current()) {
+                  screencast.starting -= 1;
+                  screencast.running = true;
+                  tab.screencastStarted = true;
+                }
+                return result;
+              },
+              (cause: unknown) => {
+                // A refused restart leaves the stream it would have replaced running.
+                if (current() && --screencast.starting === 0 && !screencast.running) {
+                  tab.screencasts.delete(owner);
+                  stopUnownedScreencast(tab, false);
+                }
+                releaseFocusWhenIdle(tab);
+                syncPainting(tab);
+                throw cause;
+              },
+            );
+          }
+          if (sessionId === undefined && method === "Page.stopScreencast") {
+            tab.screencasts.delete(owner);
+            return holdFocus(tab, method, owner, () =>
+              forward(undefined, () => {
+                if (tab.screencasts.size > 0) return Promise.resolve({});
+                tab.screencastStarted = false;
+                return send(method, params, sessionId);
+              }),
+            );
+          }
+          return holdFocus(tab, method, owner, forward);
         },
         sessionDetached: (owner) => {
           detachedOwners.add(owner);
@@ -382,9 +431,7 @@ export const make = Effect.gen(function* () {
             flatten: true,
           })
           .catch(() => {});
-        if (tab.screencasts.size > 0) {
-          void debuggee.sendCommand("Page.stopScreencast").catch(() => {});
-        }
+        endScreencasts(tab);
         setFocusEmulation(tab, false);
         detach(tab.key);
       },
@@ -436,7 +483,8 @@ export const make = Effect.gen(function* () {
       painting: false,
       agentUsed: false,
       focusReleasing: false,
-      screencasts: new Set(),
+      screencasts: new Map(),
+      screencastStarted: false,
       onMessage: (_event, method, params, sessionId) => {
         if (method === "Page.downloadWillBegin") {
           const guid = (params as { guid?: unknown } | undefined)?.guid;

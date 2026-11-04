@@ -34,13 +34,14 @@ const command = (
 const makeDebuggee = (
   options: {
     readonly deferFocus?: boolean;
-    readonly refuse?: (method: string, sessionId: string | undefined) => boolean;
+    readonly refuse?: (method: string, sessionId: string | undefined, id?: number) => boolean;
   } = {},
 ) => {
   const emitter = new NodeEvents.EventEmitter();
   const pending: Array<() => void> = [];
   const focusChanges: Array<() => void> = [];
   const sent: Array<unknown> = [];
+  const methods: string[] = [];
   const sendWaiters: Array<() => void> = [];
   const focusEmulation: Array<boolean> = [];
   const debuggee = Object.assign(emitter, {
@@ -50,7 +51,7 @@ const makeDebuggee = (
       sessionId?: string,
     ) =>
       new Promise((resolve, reject) => {
-        if (options.refuse?.(method, sessionId)) {
+        if (options.refuse?.(method, sessionId, params?.id)) {
           reject(new Error("Refused"));
           return;
         }
@@ -64,6 +65,7 @@ const makeDebuggee = (
           else resolve({});
           return;
         }
+        methods.push(method);
         sent.push(params?.id);
         pending.push(() => resolve({ method }));
         sendWaiters.shift()?.();
@@ -83,6 +85,7 @@ const makeDebuggee = (
     navigate: () => webContents.emit("did-navigate"),
     /** Ids of the commands the debugger received, in order. */
     sent,
+    methods,
     focusEmulation,
     nextSend: () => new Promise<void>((resolve) => sendWaiters.push(resolve)),
     release: () => pending.splice(0).forEach((resolve) => resolve()),
@@ -777,6 +780,7 @@ describe("DesktopBrowserHost", () => {
       yield* host.handleCommandLine(encodeJson({ type: "release", ...key }));
       yield* TestClock.adjust("1 minute");
       expect(debuggee.focusEmulation).toEqual([true, false, true, false]);
+      expect(debuggee.methods.at(-1)).toBe("Page.stopScreencast");
     }),
   );
 
@@ -901,6 +905,7 @@ describe("DesktopBrowserHost", () => {
       debuggee.release();
       yield* settle;
       expect(painting).toEqual([true]);
+      expect(debuggee.methods.filter((method) => method === "Page.stopScreencast")).toEqual([]);
 
       yield* raw({
         id: 6,
@@ -909,6 +914,80 @@ describe("DesktopBrowserHost", () => {
       });
       yield* settle;
       expect(painting).toEqual([true, false]);
+      expect(debuggee.methods.filter((method) => method === "Page.stopScreencast")).toEqual([
+        "Page.stopScreencast",
+      ]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps each session's screencast through another start's refusal or cancellation", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee({
+        refuse: (method, _sessionId, id) =>
+          method === "Page.startScreencast" && (id === 3 || id === 6),
+      });
+      host.attach(key, debuggee.tab);
+      const replies = yield* watchReplies(host);
+      const painting = yield* watchPainting(host);
+      // Each command carries its id in its params, for refusing it by id.
+      const raw = (message: Record<string, unknown>) =>
+        host.handleCommandLine(
+          encodeJson({
+            type: "cdp",
+            ...key,
+            message: encodeJson({ params: { id: message["id"] }, ...message }),
+          }),
+        );
+      const start = (id: number, sessionId: string) =>
+        raw({ id, method: "Page.startScreencast", sessionId });
+      const stop = (id: number, sessionId: string) =>
+        raw({ id, method: "Page.stopScreencast", sessionId });
+
+      yield* raw({ id: 1, method: "Target.attachToTarget", params: { targetId: "GUEST" } });
+      yield* raw({ id: 2, method: "Target.attachToTarget", params: { targetId: "GUEST" } });
+      expect([yield* Queue.take(replies), yield* Queue.take(replies)]).toEqual([1, 2]);
+      // An older start's refusal leaves the newer one pending.
+      yield* start(3, "t3-preview-page-1");
+      yield* start(4, "t3-preview-page-1");
+      expect(yield* Queue.take(replies)).toBe(3);
+      yield* start(5, "t3-preview-page-2");
+      yield* settle;
+      debuggee.release();
+      expect(new Set([yield* Queue.take(replies), yield* Queue.take(replies)])).toEqual(
+        new Set([4, 5]),
+      );
+      // A refused restart leaves its session's running stream.
+      yield* start(6, "t3-preview-page-2");
+      expect(yield* Queue.take(replies)).toBe(6);
+      yield* stop(7, "t3-preview-page-1");
+      yield* settle;
+      expect(debuggee.methods).not.toContain("Page.stopScreencast");
+      expect(yield* Queue.take(replies)).toBe(7);
+      // A start its session detached before Chromium answered stays stopped.
+      yield* start(8, "t3-preview-page-1");
+      yield* settle;
+      yield* raw({
+        id: 9,
+        method: "Target.detachFromTarget",
+        params: { sessionId: "t3-preview-page-1" },
+      });
+      expect(yield* Queue.take(replies)).toBe(9);
+      debuggee.release();
+      expect(yield* Queue.take(replies)).toBe(8);
+      expect(painting).toEqual([true]);
+      expect(debuggee.methods).toEqual([
+        "Page.startScreencast",
+        "Page.startScreencast",
+        "Page.startScreencast",
+      ]);
+
+      yield* stop(10, "t3-preview-page-2");
+      yield* settle;
+      debuggee.release();
+      expect(yield* Queue.take(replies)).toBe(10);
+      expect(painting).toEqual([true, false]);
+      expect(debuggee.methods.at(-1)).toBe("Page.stopScreencast");
     }).pipe(Effect.scoped),
   );
 

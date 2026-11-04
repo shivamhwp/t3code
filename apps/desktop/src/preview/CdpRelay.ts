@@ -101,6 +101,8 @@ export function createCdpRelayConnection(
   let downloadEventsEnabled = false;
   /** Relay-created page sessions share one real debugger; child frame sessions retain their own ids. */
   const sessions = new Map<string, "browser" | "page">([[PAGE_SESSION_ID, "page"]]);
+  /** Page sessions streaming the shared screencast, as for the host; frames reach only running ones. */
+  const screencasts = new Map<string, { running: boolean; starting: number }>();
   let sessionSequence = 0;
   const newSession = (kind: "browser" | "page") => {
     const sessionId = `t3-preview-${kind}-${++sessionSequence}`;
@@ -168,6 +170,7 @@ export function createCdpRelayConnection(
         const sessionId = command.params?.["sessionId"];
         if (typeof sessionId === "string" && sessionId !== PAGE_SESSION_ID) {
           sessions.delete(sessionId);
+          screencasts.delete(sessionId);
           target.sessionDetached?.(sessionId);
         }
         return {};
@@ -198,7 +201,33 @@ export function createCdpRelayConnection(
     }
     // Playwright asks for this on every page; the host emulates focus only while it is in use.
     if (command.method === "Emulation.setFocusEmulationEnabled") return Promise.resolve({});
-    return target.send(command.method, command.params ?? {}, child, owner);
+    const result = target.send(command.method, command.params ?? {}, child, owner);
+    if (child !== undefined) return result;
+    const sessionId = command.sessionId!;
+    if (command.method === "Page.stopScreencast") screencasts.delete(sessionId);
+    if (command.method !== "Page.startScreencast") return result;
+    const screencast = screencasts.get(sessionId) ?? { running: false, starting: 0 };
+    screencast.starting += 1;
+    screencasts.set(sessionId, screencast);
+    return result.then(
+      (value) => {
+        if (screencasts.get(sessionId) === screencast) {
+          screencast.starting -= 1;
+          screencast.running = true;
+        }
+        return value;
+      },
+      (cause: unknown) => {
+        if (
+          screencasts.get(sessionId) === screencast &&
+          --screencast.starting === 0 &&
+          !screencast.running
+        ) {
+          screencasts.delete(sessionId);
+        }
+        throw cause;
+      },
+    );
   };
 
   return {
@@ -250,8 +279,11 @@ export function createCdpRelayConnection(
         send({ method, params, sessionId });
         return;
       }
-      for (const [id, kind] of sessions)
-        if (kind === "page") send({ method, params, sessionId: id });
+      for (const [id, kind] of sessions) {
+        if (kind !== "page") continue;
+        if (method === "Page.screencastFrame" && !screencasts.get(id)?.running) continue;
+        send({ method, params, sessionId: id });
+      }
     },
   };
 }
