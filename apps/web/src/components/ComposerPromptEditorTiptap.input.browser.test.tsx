@@ -10,6 +10,7 @@ import {
 import type { ServerProviderSkill } from "@t3tools/contracts";
 import type { Editor } from "@tiptap/core";
 import { redoDepth, undoDepth } from "@tiptap/pm/history";
+import { NodeSelection } from "@tiptap/pm/state";
 import { createElement, createRef, useEffect, useState } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
@@ -212,6 +213,34 @@ it.each([
   },
 );
 
+it("keeps a styled atom selected when its Markdown source is revealed", async () => {
+  const reference = formatInlineContextReference(fileContextReference(file));
+  await using screen = await mountEditor(`**${reference}** after`);
+  const { editor } = screen;
+  await act(async () => {
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+  });
+  let atom = -1;
+  editor.state.doc.descendants((node, pos) => {
+    if (node.isInline && node.isAtom && !node.isText) atom = pos;
+  });
+  expect(atom).toBeGreaterThan(0);
+  await act(async () => {
+    editor.commands.setNodeSelection(atom);
+  });
+  expect(editor.state.selection).toBeInstanceOf(NodeSelection);
+  expect((editor.state.selection as NodeSelection).node.isAtom).toBe(true);
+  expect((editor.state.selection as NodeSelection).node.isText).toBe(false);
+  await act(async () => {
+    editor.commands.deleteSelection();
+  });
+  let atoms = 0;
+  editor.state.doc.descendants((node) => {
+    if (node.isInline && node.isAtom && !node.isText) atoms++;
+  });
+  expect(atoms).toBe(0);
+  expect(serializeEditorDoc(editor.state.doc).value).toContain("after");
+});
 it.each([false, true])(
   "composes an umlaut without wrapping the preedit text (rich text: %s)",
   async (richTextEnabled) => {
