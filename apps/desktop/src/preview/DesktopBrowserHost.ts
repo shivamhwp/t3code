@@ -368,11 +368,12 @@ export const make = Effect.gen(function* () {
             const current = () => tab.screencasts.get(owner) === screencast;
             return holdFocus(tab, method, owner, () => forward(current)).then(
               (result) => {
+                tab.screencastStarted = true;
                 if (current()) {
                   screencast.starting -= 1;
                   screencast.running = true;
-                  tab.screencastStarted = true;
                 }
+                stopUnownedScreencast(tab, false);
                 return result;
               },
               (cause: unknown) => {

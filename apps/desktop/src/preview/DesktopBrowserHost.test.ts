@@ -38,7 +38,7 @@ const makeDebuggee = (
   } = {},
 ) => {
   const emitter = new NodeEvents.EventEmitter();
-  const pending: Array<() => void> = [];
+  const pending: Array<{ resolve: () => void; reject: () => void }> = [];
   const focusChanges: Array<() => void> = [];
   const sent: Array<unknown> = [];
   const methods: string[] = [];
@@ -67,7 +67,10 @@ const makeDebuggee = (
         }
         methods.push(method);
         sent.push(params?.id);
-        pending.push(() => resolve({ method }));
+        pending.push({
+          resolve: () => resolve({ method }),
+          reject: () => reject(new Error("Refused")),
+        });
         sendWaiters.shift()?.();
       }),
   });
@@ -88,8 +91,9 @@ const makeDebuggee = (
     methods,
     focusEmulation,
     nextSend: () => new Promise<void>((resolve) => sendWaiters.push(resolve)),
-    release: () => pending.splice(0).forEach((resolve) => resolve()),
-    releaseFirst: () => pending.shift()?.(),
+    release: () => pending.splice(0).forEach(({ resolve }) => resolve()),
+    releaseFirst: () => pending.shift()?.resolve(),
+    refuseLast: () => pending.pop()?.reject(),
     settleFocus: () => focusChanges.splice(0).forEach((resolve) => resolve()),
   };
 };
@@ -988,6 +992,23 @@ describe("DesktopBrowserHost", () => {
       expect(yield* Queue.take(replies)).toBe(10);
       expect(painting).toEqual([true, false]);
       expect(debuggee.methods.at(-1)).toBe("Page.stopScreencast");
+
+      const previousCommands = debuggee.methods.length;
+      yield* start(11, "t3-preview-page");
+      yield* start(12, "t3-preview-page-2");
+      yield* settle;
+      yield* stop(13, "t3-preview-page");
+      expect(yield* Queue.take(replies)).toBe(13);
+      debuggee.refuseLast();
+      expect(yield* Queue.take(replies)).toBe(12);
+      debuggee.releaseFirst();
+      expect(yield* Queue.take(replies)).toBe(11);
+      expect(debuggee.methods.slice(previousCommands)).toEqual([
+        "Page.startScreencast",
+        "Page.startScreencast",
+        "Page.stopScreencast",
+      ]);
+      expect(painting.at(-1)).toBe(false);
     }).pipe(Effect.scoped),
   );
 
