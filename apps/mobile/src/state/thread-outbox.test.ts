@@ -1191,7 +1191,7 @@ describe("thread outbox", () => {
     ).toBe("wait");
   });
 
-  it("sends queued creations once connected and live, removing already-created ones", () => {
+  it("sends queued creations once connected and live, relaunching unchanged already-created ones", () => {
     expect(
       resolveThreadOutboxDeliveryAction({
         isCreation: true,
@@ -1224,6 +1224,14 @@ describe("thread outbox", () => {
         environmentConnected: true,
       }),
     ).toBe("remove");
+    const launched = {
+      isCreation: true,
+      threadExists: true,
+      launchedContentUnchanged: true,
+      environmentConnected: true,
+    } as const;
+    expect(resolveThreadOutboxDeliveryAction({ ...launched, shellStatus: "live" })).toBe("send");
+    expect(resolveThreadOutboxDeliveryAction({ ...launched, shellStatus: "cached" })).toBe("wait");
   });
 
   it("round-trips queued PR checkout sources and gates incomplete creations from sending", () => {

@@ -58,6 +58,7 @@ import {
 } from "./thread-outbox";
 import { removeThreadOutboxMessage } from "./thread-outbox-removal";
 import {
+  isQueuedLaunchContentUnchanged,
   isQueuedThreadCreationSendable,
   queuedMessageContentKey,
   resolveThreadOutboxDeliveryAction,
@@ -326,8 +327,10 @@ export async function removeAcknowledgedExistingThreadMessage(
   }
 }
 
+/** `acceptedContentKey` is the content of a launch the server acknowledged. */
 export async function recoverEditedCreationAfterDelivery(
   queuedMessage: QueuedThreadMessage,
+  acceptedContentKey?: string,
 ): Promise<boolean> {
   const kept = Object.values(appAtomRegistry.get(threadOutboxManager.queuedMessagesByThreadKeyAtom))
     .flat()
@@ -339,8 +342,8 @@ export async function recoverEditedCreationAfterDelivery(
   if (appAtomRegistry.get(editingQueuedMessageIdsAtom)[kept.messageId]) {
     return true;
   }
-  if (kept.dispatchedContentKey === queuedMessageContentKey(kept)) {
-    // The launch already carried this content; restoring it would let the user send it twice.
+  if (acceptedContentKey !== undefined && queuedMessageContentKey(kept) === acceptedContentKey) {
+    // The server has this content; restoring it would let the user send it twice.
     try {
       await removeDeliveredCloudQueuedMessage(kept).catch((error) => {
         console.warn("[thread-outbox] could not update sign-out snapshot after delivery", {
@@ -1113,6 +1116,14 @@ export function createThreadOutboxDelivery(): {
       persistedMessage = dispatchedMessage;
       deliveryRevision += 1;
     }
+    // Deletion takes the editor hold without a revision bump, so recheck it after the awaits above.
+    if (!hasAccess() || !isQueuedMessagePayloadCurrent(persistedMessage, deliveryRevision)) {
+      return true;
+    }
+    if (appAtomRegistry.get(editingQueuedMessageIdsAtom)[queuedMessage.messageId]) {
+      await preserveUploadedAttachmentsForEditor(queuedMessage, persistedMessage);
+      return true;
+    }
     const deliveryResult = await runDeliveryCommand(threadEnvironment.startTurn, {
       environmentId: queuedMessage.environmentId,
       input: buildProjectThreadStartTurnInput({
@@ -1160,7 +1171,10 @@ export function createThreadOutboxDelivery(): {
       if (appAtomRegistry.get(editingQueuedMessageIdsAtom)[queuedMessage.messageId]) {
         return true;
       }
-      return recoverEditedCreationAfterDelivery(persistedMessage);
+      return recoverEditedCreationAfterDelivery(
+        persistedMessage,
+        queuedMessageContentKey(persistedMessage),
+      );
     }
     return outcome === "removed";
   };
@@ -1309,11 +1323,14 @@ export function createThreadOutboxDelivery(): {
           );
         }
       }
+      const launchedContentUnchanged =
+        creation !== undefined && isQueuedLaunchContentUnchanged(nextQueuedMessage);
       const deliveryAction = resolveThreadOutboxDeliveryAction({
         isCreation: creation !== undefined,
         threadExists: thread !== undefined,
         shellStatus,
         environmentConnected: environment?.connectionState === "connected",
+        launchedContentUnchanged,
         ...(familyRead === undefined ? {} : { familyRead }),
       });
       if (
@@ -1409,6 +1426,7 @@ export function createThreadOutboxDelivery(): {
             threadExists: liveThread !== undefined,
             shellStatus,
             environmentConnected: environment?.connectionState === "connected",
+            launchedContentUnchanged,
           });
           if (liveDeliveryAction !== "send") {
             return true;
@@ -1416,7 +1434,7 @@ export function createThreadOutboxDelivery(): {
         }
         return deliveryAction === "remove"
           ? creation !== undefined
-            ? // Recovery drops it when the persisted launch content still matches, else saves the edit.
+            ? // Edited or legacy content: the composer keeps it, since its acceptance is unknown.
               recoverEditedCreationAfterDelivery(nextQueuedMessage)
             : removeQueuedMessage("[thread-outbox] failed to remove message for a missing thread")
           : creation !== undefined

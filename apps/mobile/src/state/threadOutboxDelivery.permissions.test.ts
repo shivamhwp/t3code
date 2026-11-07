@@ -31,6 +31,12 @@ const state = vi.hoisted(() => ({
   manager: null as unknown as ReturnType<
     typeof import("./thread-outbox-manager").createThreadOutboxManager
   >,
+  // Encoded records, as the app's storage holds them across restarts.
+  stored: new Map<string, unknown>(),
+  beforeWrite: null as (() => Promise<void>) | null,
+  createManager: null as unknown as () => ReturnType<
+    typeof import("./thread-outbox-manager").createThreadOutboxManager
+  >,
   thread: {
     environmentId: "secondary",
     id: "thread",
@@ -109,17 +115,33 @@ vi.mock("../lib/uuid", () => ({ uuidv4: () => "uuid", randomHex: () => "abcd" })
 vi.mock("../lib/attachmentUpload", () => ({ prepareTurnAttachments: state.prepare }));
 vi.mock("./thread-outbox", async () => {
   const { createThreadOutboxManager } = await import("./thread-outbox-manager");
+  const { decodeQueuedThreadMessage, encodeQueuedThreadMessage } =
+    await import("./thread-outbox-model");
   const { appAtomRegistry } = await import("./atom-registry");
-  state.manager = createThreadOutboxManager({
-    registry: appAtomRegistry,
-    storage: {
-      load: async () => ({ messages: [], errors: [] }),
-      write: async () => {},
-      remove: async () => {},
-    },
-  });
+  state.createManager = () =>
+    createThreadOutboxManager({
+      registry: appAtomRegistry,
+      storage: {
+        load: async () => ({
+          messages: [...state.stored.values()].map((record) => decodeQueuedThreadMessage(record)),
+          errors: [],
+        }),
+        write: async (message) => {
+          await state.beforeWrite?.();
+          state.stored.set(message.messageId, encodeQueuedThreadMessage(message));
+        },
+        remove: async (message) => {
+          state.stored.delete(message.messageId);
+        },
+      },
+    });
+  state.manager = state.createManager();
   return {
-    threadOutboxManager: state.manager,
+    // A restart swaps the manager; delivery keeps its module-level reference.
+    threadOutboxManager: new Proxy(
+      {},
+      { get: (_target, key) => state.manager[key as keyof typeof state.manager] },
+    ),
     threadOutboxRevision: (id: MessageId) => state.manager.revisionOf(id),
     confirmThreadOutboxMessageQueued: (message: QueuedThreadMessage) =>
       state.manager.confirmQueued(message),
@@ -212,6 +234,8 @@ beforeEach(() => {
   setOperateGrant("primary", true);
   setOperateGrant("secondary", false);
   state.draftText = "Keep this draft separate";
+  state.stored.clear();
+  state.beforeWrite = null;
   state.config.shellThreadFamilies = false;
   state.modelUnavailable.mockReset().mockReturnValue(false);
   state.familyMount.mockReset().mockReturnValue(() => {});
@@ -553,25 +577,37 @@ describe("compaction before a queued send", () => {
 });
 
 describe("a new task whose launch reply was lost", () => {
+  const queuedCreation = () =>
+    message({
+      threadId: ThreadId.make("new-thread"),
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+      creation: {
+        projectId: ProjectId.make("project"),
+        projectCwd: "/repo",
+        workspaceMode: "local",
+        branch: null,
+        worktreePath: null,
+      },
+    });
+  const lostReply = () => AsyncResult.failure(Cause.fail(new Error("Socket is not connected")));
+
   it.each([
-    { change: "unchanged", edit: null, recovered: null },
-    { change: "edited", edit: { text: "Edited after launch" }, recovered: "Edited after launch" },
+    { change: "unchanged", edit: null, relaunch: "accepted", starts: 2, kept: 0, recovered: null },
+    // The shell can exist without the first message: the server commits them separately.
+    { change: "unchanged", edit: null, relaunch: "lost", starts: 2, kept: 1, recovered: null },
+    {
+      change: "edited",
+      edit: { text: "Edited after launch" },
+      relaunch: null,
+      starts: 1,
+      kept: 0,
+      recovered: "Edited after launch",
+    },
   ])(
-    "drops the launched task once its thread appears, recovering only edits ($change)",
-    async ({ edit, recovered }) => {
+    "after a restart, settles a created thread only on an accepted launch ($change, relaunch $relaunch)",
+    async ({ edit, relaunch, starts, kept, recovered }) => {
       setOperateGrant("secondary", true);
-      const queued = message({
-        threadId: ThreadId.make("new-thread"),
-        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
-        creation: {
-          projectId: ProjectId.make("project"),
-          projectCwd: "/repo",
-          workspaceMode: "local",
-          branch: null,
-          worktreePath: null,
-        },
-      });
-      await state.manager.enqueue(queued);
+      await state.manager.enqueue(queuedCreation());
       const started = Promise.withResolvers<void>();
       const reply = Promise.withResolvers<AsyncResult.AsyncResult<unknown, Error>>();
       state.start.mockImplementationOnce(() => {
@@ -580,27 +616,61 @@ describe("a new task whose launch reply was lost", () => {
       });
       const drained = runDrain();
       await started.promise;
-      // The launch committed, so its thread reaches the shell, but the reply never arrives.
       appAtomRegistry.set(state.threadShells, [
         state.thread,
         { ...state.thread, id: "new-thread" },
       ]);
-      reply.resolve(AsyncResult.failure(Cause.fail(new Error("Socket is not connected"))));
+      reply.resolve(lostReply());
       await drained;
-      expect(remaining()).toHaveLength(1);
       if (edit !== null) {
-        await state.manager.update({ ...remaining()[0]!, ...edit });
+        expect(await state.manager.update({ ...remaining()[0]!, ...edit })).toBe(true);
       }
 
-      // A relaunched app finds the thread already created.
+      // A relaunched app hydrates a fresh manager from the stored records.
       state.cleanups.splice(0).forEach((cleanup) => cleanup());
+      state.manager = state.createManager();
+      expect(await state.manager.load()).toBe(true);
+      expect(remaining()).toHaveLength(1);
+      expect(remaining()[0]!.dispatchedContentKey).toBeDefined();
+      if (relaunch === "lost") state.start.mockResolvedValueOnce(lostReply());
       await runDrain();
 
-      expect(state.start).toHaveBeenCalledOnce();
-      expect(remaining()).toEqual([]);
+      expect(state.start).toHaveBeenCalledTimes(starts);
+      if (starts === 2) {
+        expect(state.start.mock.calls[1]![0].input).toMatchObject({
+          commandId: "command",
+          message: { messageId: "message", text: "Keep this queued" },
+        });
+      }
+      expect(remaining()).toHaveLength(kept);
+      expect(state.stored.size).toBe(kept);
       expect(state.draftText).toBe(
         recovered === null ? "Keep this draft separate" : `Keep this draft separate\n${recovered}`,
       );
     },
   );
+
+  it.each([
+    {
+      change: "a deletion holds the task",
+      apply: () => appAtomRegistry.set(editingQueuedMessageIdsAtom, { message: true }),
+    },
+    { change: "operation access is revoked", apply: () => setOperateGrant("secondary", false) },
+  ])("does not launch when $change while the launch is being recorded", async ({ apply }) => {
+    setOperateGrant("secondary", true);
+    await state.manager.enqueue(queuedCreation());
+    const writing = Promise.withResolvers<void>();
+    const write = Promise.withResolvers<void>();
+    state.beforeWrite = () => {
+      writing.resolve();
+      return write.promise;
+    };
+    const drained = runDrain();
+    await writing.promise;
+    apply();
+    write.resolve();
+    await drained;
+    expect(state.start).not.toHaveBeenCalled();
+    expect(remaining()).toHaveLength(1);
+  });
 });

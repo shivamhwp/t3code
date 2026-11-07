@@ -145,6 +145,10 @@ export function queuedMessageContentKey(message: QueuedThreadMessage): string {
   ]);
 }
 
+export function isQueuedLaunchContentUnchanged(message: QueuedThreadMessage): boolean {
+  return message.dispatchedContentKey === queuedMessageContentKey(message);
+}
+
 export function encodeQueuedThreadMessage(message: QueuedThreadMessage): unknown {
   return encodeStoredQueuedThreadMessage({
     schemaVersion: THREAD_OUTBOX_SCHEMA_VERSION,
@@ -198,9 +202,14 @@ export function resolveThreadOutboxDeliveryAction(input: {
    * only a settled family read without the row is.
    */
   readonly familyRead?: ThreadFamilyRead;
+  /**
+   * A created thread does not prove its first message landed. Relaunching the unchanged
+   * content replays the same command, and only its success settles the creation.
+   */
+  readonly launchedContentUnchanged?: boolean;
 }): ThreadOutboxDeliveryAction {
   if (input.isCreation) {
-    if (input.threadExists) {
+    if (input.threadExists && input.launchedContentUnchanged !== true) {
       return "remove";
     }
     // Wait for live shells; an unsynchronized list can hide delivered creations and cause duplicate re-issuance.
