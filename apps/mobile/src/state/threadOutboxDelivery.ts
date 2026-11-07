@@ -59,6 +59,7 @@ import {
 import { removeThreadOutboxMessage } from "./thread-outbox-removal";
 import {
   isQueuedThreadCreationSendable,
+  queuedMessageContentKey,
   resolveThreadOutboxDeliveryAction,
   resolveThreadOutboxDispatchStep,
   resolveThreadOutboxFailureAction,
@@ -337,6 +338,25 @@ export async function recoverEditedCreationAfterDelivery(
   const keptRevision = threadOutboxRevision(kept.messageId);
   if (appAtomRegistry.get(editingQueuedMessageIdsAtom)[kept.messageId]) {
     return true;
+  }
+  if (kept.dispatchedContentKey === queuedMessageContentKey(kept)) {
+    // The launch already carried this content; restoring it would let the user send it twice.
+    try {
+      await removeDeliveredCloudQueuedMessage(kept).catch((error) => {
+        console.warn("[thread-outbox] could not update sign-out snapshot after delivery", {
+          messageId: kept.messageId,
+          error,
+        });
+      });
+      return await removeThreadOutboxMessage(
+        kept,
+        keptRevision,
+        () => !appAtomRegistry.get(editingQueuedMessageIdsAtom)[kept.messageId],
+      );
+    } catch (error) {
+      console.warn("[thread-outbox] could not remove a launched pending task", error);
+      return false;
+    }
   }
   const draftKey = scopedThreadKey(kept.environmentId, kept.threadId);
   try {
@@ -1076,6 +1096,23 @@ export function createThreadOutboxDelivery(): {
         startFromOrigin: false,
       };
     }
+    const contentKey = queuedMessageContentKey(persistedMessage);
+    if (persistedMessage.dispatchedContentKey !== contentKey) {
+      const dispatchedMessage = { ...persistedMessage, dispatchedContentKey: contentKey };
+      try {
+        if (!(await updateThreadOutboxMessage(dispatchedMessage, deliveryRevision))) return true;
+      } catch (error) {
+        console.warn("[thread-outbox] could not record a pending task launch", {
+          environmentId: queuedMessage.environmentId,
+          threadId: queuedMessage.threadId,
+          messageId: queuedMessage.messageId,
+          error,
+        });
+        return false;
+      }
+      persistedMessage = dispatchedMessage;
+      deliveryRevision += 1;
+    }
     const deliveryResult = await runDeliveryCommand(threadEnvironment.startTurn, {
       environmentId: queuedMessage.environmentId,
       input: buildProjectThreadStartTurnInput({
@@ -1379,7 +1416,7 @@ export function createThreadOutboxDelivery(): {
         }
         return deliveryAction === "remove"
           ? creation !== undefined
-            ? // After restart, always recover delivered creations; lost in-memory state cannot distinguish edits from duplicate payloads.
+            ? // Recovery drops it when the persisted launch content still matches, else saves the edit.
               recoverEditedCreationAfterDelivery(nextQueuedMessage)
             : removeQueuedMessage("[thread-outbox] failed to remove message for a missing thread")
           : creation !== undefined

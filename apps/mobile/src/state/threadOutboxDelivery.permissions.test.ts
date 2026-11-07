@@ -128,8 +128,11 @@ vi.mock("./thread-outbox", async () => {
   };
 });
 vi.mock("./thread-outbox-removal", () => ({
-  removeThreadOutboxMessage: (message: QueuedThreadMessage, revision?: number) =>
-    state.manager.remove(message, revision),
+  removeThreadOutboxMessage: async (
+    message: QueuedThreadMessage,
+    revision?: number,
+    canRemove?: () => boolean,
+  ) => (await state.manager.remove(message, revision, canRemove)) !== null,
 }));
 vi.mock("./use-thread-outbox", async () => {
   const { Atom } = await import("effect/reactivity");
@@ -547,4 +550,57 @@ describe("compaction before a queued send", () => {
     expect(state.start.mock.calls[0]?.[0].input).toMatchObject(compactTurn);
     expect(remaining()).toEqual([queued]);
   });
+});
+
+describe("a new task whose launch reply was lost", () => {
+  it.each([
+    { change: "unchanged", edit: null, recovered: null },
+    { change: "edited", edit: { text: "Edited after launch" }, recovered: "Edited after launch" },
+  ])(
+    "drops the launched task once its thread appears, recovering only edits ($change)",
+    async ({ edit, recovered }) => {
+      setOperateGrant("secondary", true);
+      const queued = message({
+        threadId: ThreadId.make("new-thread"),
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        creation: {
+          projectId: ProjectId.make("project"),
+          projectCwd: "/repo",
+          workspaceMode: "local",
+          branch: null,
+          worktreePath: null,
+        },
+      });
+      await state.manager.enqueue(queued);
+      const started = Promise.withResolvers<void>();
+      const reply = Promise.withResolvers<AsyncResult.AsyncResult<unknown, Error>>();
+      state.start.mockImplementationOnce(() => {
+        started.resolve();
+        return reply.promise;
+      });
+      const drained = runDrain();
+      await started.promise;
+      // The launch committed, so its thread reaches the shell, but the reply never arrives.
+      appAtomRegistry.set(state.threadShells, [
+        state.thread,
+        { ...state.thread, id: "new-thread" },
+      ]);
+      reply.resolve(AsyncResult.failure(Cause.fail(new Error("Socket is not connected"))));
+      await drained;
+      expect(remaining()).toHaveLength(1);
+      if (edit !== null) {
+        await state.manager.update({ ...remaining()[0]!, ...edit });
+      }
+
+      // A relaunched app finds the thread already created.
+      state.cleanups.splice(0).forEach((cleanup) => cleanup());
+      await runDrain();
+
+      expect(state.start).toHaveBeenCalledOnce();
+      expect(remaining()).toEqual([]);
+      expect(state.draftText).toBe(
+        recovered === null ? "Keep this draft separate" : `Keep this draft separate\n${recovered}`,
+      );
+    },
+  );
 });

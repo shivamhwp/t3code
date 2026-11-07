@@ -79,6 +79,7 @@ import {
   decodeQueuedThreadMessage,
   encodeQueuedThreadMessage,
   isQueuedThreadCreationSendable,
+  queuedMessageContentKey,
   resolveThreadOutboxDeliveryAction,
   resolveThreadOutboxDispatchStep,
   resolveThreadOutboxFailureAction,
@@ -112,12 +113,11 @@ function queuedMessage(input: {
 }
 
 describe("thread outbox", () => {
-  it("retains structured context through a persisted offline queue round trip", () => {
-    const message: QueuedThreadMessage = {
+  it("retains structured context and its launch key through a persisted offline queue round trip", () => {
+    const unlaunched: QueuedThreadMessage = {
       ...queuedMessage({ messageId: "context-message", createdAt: "2026-09-06T12:00:00.000Z" }),
       text: "[Build](t3-context://v1/terminal/build-output)",
       context: {
-        version: 1,
         records: [
           {
             version: 1,
@@ -131,11 +131,48 @@ describe("thread outbox", () => {
             text: "Build failed",
           },
         ],
+        version: 1,
       },
     };
-    expect(
-      decodeQueuedThreadMessage(JSON.parse(JSON.stringify(encodeQueuedThreadMessage(message)))),
-    ).toEqual(message);
+    const message = { ...unlaunched, dispatchedContentKey: queuedMessageContentKey(unlaunched) };
+    const decoded = decodeQueuedThreadMessage(
+      JSON.parse(JSON.stringify(encodeQueuedThreadMessage(message))),
+    );
+    expect(decoded).toEqual(message);
+    expect(queuedMessageContentKey(decoded)).toBe(message.dispatchedContentKey);
+  });
+
+  it("keys launched content by what the user wrote, not by upload bookkeeping", () => {
+    const message: QueuedThreadMessage = {
+      ...queuedMessage({ messageId: "launched", createdAt: "2026-09-06T12:00:00.000Z" }),
+      attachments: [
+        {
+          id: "file-1",
+          type: "file",
+          name: "report.pdf",
+          mimeType: "application/pdf",
+          sizeBytes: 42,
+          fileUri: "file:///documents/t3-composer-attachments/report.pdf",
+        },
+      ],
+    };
+    const key = queuedMessageContentKey(message);
+    const uploaded = {
+      ...message,
+      attachments: message.attachments.map((attachment) => ({
+        ...attachment,
+        uploadedAttachmentId: "uploaded-1",
+        uploadEnvironmentId: message.environmentId,
+      })),
+    };
+    expect(queuedMessageContentKey(uploaded)).toBe(key);
+    for (const edited of [
+      { ...message, text: "edited" },
+      { ...message, context: { version: 1 as const, records: [] } },
+      { ...message, attachments: [] },
+    ]) {
+      expect(queuedMessageContentKey(edited)).not.toBe(key);
+    }
   });
   it.each(["read", "json", "schema"] as const)(
     "recovers usable messages without permitting cleanup after a record %s failure",

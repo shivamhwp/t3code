@@ -61,11 +61,13 @@ export const QueuedThreadMessageSchema = Schema.Struct({
   runtimeMode: Schema.optional(RuntimeMode),
   interactionMode: Schema.optional(ProviderInteractionMode),
   creation: Schema.optional(QueuedThreadCreationSchema),
+  dispatchedContentKey: Schema.optional(Schema.String),
   createdAt: IsoDateTime,
 });
 
 const decodeStoredQueuedThreadMessage = Schema.decodeUnknownSync(QueuedThreadMessageSchema);
 const encodeStoredQueuedThreadMessage = Schema.encodeUnknownSync(QueuedThreadMessageSchema);
+const encodeMessageContext = Schema.encodeSync(OrchestrationMessageContext);
 
 export interface QueuedThreadCreation {
   readonly projectId: ProjectIdType;
@@ -96,6 +98,8 @@ export interface QueuedThreadMessage {
   /** Starts a new provider session (`/clear`). */
   readonly freshContext?: boolean;
   readonly creation?: QueuedThreadCreation;
+  /** Persisted before a launch so a lost reply can be told apart from a later edit. */
+  readonly dispatchedContentKey?: string;
   readonly createdAt: string;
 }
 
@@ -130,6 +134,15 @@ export function modelSelectionsEqual(left: ModelSelectionType, right: ModelSelec
     left.model === right.model &&
     JSON.stringify(left.options ?? null) === JSON.stringify(right.options ?? null)
   );
+}
+
+/** Upload bookkeeping is left out: it changes after a launch without changing what was sent. */
+export function queuedMessageContentKey(message: QueuedThreadMessage): string {
+  return JSON.stringify([
+    message.text,
+    message.context === undefined ? null : encodeMessageContext(message.context),
+    message.attachments.map((attachment) => attachment.id),
+  ]);
 }
 
 export function encodeQueuedThreadMessage(message: QueuedThreadMessage): unknown {
