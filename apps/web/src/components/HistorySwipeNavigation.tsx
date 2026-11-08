@@ -1,7 +1,7 @@
 import { ArrowLeftIcon, ArrowRightIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { cn } from "../lib/utils";
+import { cn, isWindowsPlatform } from "../lib/utils";
 import { canNavigateHistory, navigateHistory, type HistoryDirection } from "../navigationHistory";
 
 const SWIPE_TRIGGER_DISTANCE = 120;
@@ -94,6 +94,8 @@ export function HistorySwipeNavigation() {
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window wheel and desktop gesture listeners track trackpad swipes
   useEffect(() => {
+    // Windows tilt wheels emit the same pixel wheel stream and gesture events as a trackpad swipe.
+    if (isWindowsPlatform(navigator.platform)) return;
     let gesture: SwipeGesture | null = null;
     const hideIndicator = () =>
       setSwipe((current) => (current === null ? null : { ...current, tracking: false }));

@@ -13,7 +13,7 @@ function swipe(target: Element, deltaX: number) {
 }
 
 describe("HistorySwipeNavigation", () => {
-  it.each([
+  it.each<[string, string, number, number, boolean, string?]>([
     ["scrolling left inside a shadow-root scroller keeps the thread", "shadow", 100, -130, false],
     ["scrolling right inside a shadow-root scroller keeps the thread", "shadow", 100, 130, false],
     [
@@ -27,8 +27,11 @@ describe("HistorySwipeNavigation", () => {
     ["swiping back at a shadow-root scroller's left edge navigates", "shadow", 0, -130, true],
     ["swiping back over a panel without overflow navigates", "none", 0, -130, true],
     ["a swipe that started in a closed dialog keeps the thread", "closed-dialog", 0, -130, false],
-  ] as const)("%s", async (_name, scroller, scrollLeft, deltaX, navigates) => {
+    ["swiping back on Linux navigates", "none", 0, -130, true, "Linux x86_64"],
+    ["tilting a Windows mouse wheel keeps the thread", "none", 0, -130, false, "Win32"],
+  ])("%s", async (_name, scroller, scrollLeft, deltaX, navigates, os) => {
     navigateHistory.mockReset();
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue(os ?? "MacIntel");
     await using screen = await render(<HistorySwipeNavigation />);
     const panel = screen.container.appendChild(document.createElement("div"));
     const root = scroller.startsWith("shadow") ? panel.attachShadow({ mode: "open" }) : panel;
