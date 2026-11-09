@@ -274,6 +274,78 @@ describe("ssh tunnel scripts", () => {
 
   it.effect.each([
     {
+      name: "waits for an SSH connection that opens the forward after 20s",
+      readyAfterMs: 20_100,
+      expected: "ready on 3773",
+    },
+    {
+      name: "gives up on a forward that never answers after 60s",
+      readyAfterMs: null,
+      expected: "Timed out waiting 60000ms",
+    },
+  ])("$name", ({ readyAfterMs, expected }) =>
+    Effect.gen(function* () {
+      const firstProbe = yield* Deferred.make<void>();
+      let forwardListening = false;
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.succeed(
+          commandArgs(command).includes("-N")
+            ? makeRunningProcess(() => undefined)
+            : makeSuccessfulProcess('{"remotePort":3773}\n'),
+        ),
+      );
+      const slowForwardClient = HttpClient.make((request) =>
+        Deferred.succeed(firstProbe, undefined).pipe(
+          Effect.as(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response("", { status: forwardListening ? 200 : 503 }),
+            ),
+          ),
+        ),
+      );
+      const layer = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(HttpClient.HttpClient, slowForwardClient),
+        Layer.succeed(NetService.NetService, testNetService),
+        SshAuth.SshPasswordPrompt.disabledLayer,
+        SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+      );
+      yield* Effect.gen(function* () {
+        const manager = yield* SshTunnel.SshEnvironmentManager;
+        const ensure = yield* Effect.forkChild(
+          Effect.result(
+            manager.ensureEnvironment({
+              alias: "devbox",
+              hostname: "devbox",
+              username: null,
+              port: null,
+            }),
+          ),
+        );
+        yield* Deferred.await(firstProbe);
+        if (readyAfterMs === null) {
+          yield* TestClock.adjust(Duration.millis(60_000));
+        } else {
+          yield* TestClock.adjust(Duration.millis(readyAfterMs));
+          forwardListening = true;
+          yield* TestClock.adjust(Duration.millis(100));
+        }
+        const result = yield* Fiber.join(ensure);
+        assert.include(
+          Result.isSuccess(result)
+            ? `ready on ${result.success.remotePort}`
+            : result.failure.message,
+          expected,
+        );
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    }),
+  );
+
+  it.effect.each([
+    {
       name: "does not ask for a password when the agent cannot sign an accepted key",
       stderr:
         'sign_and_send_pubkey: signing failed for ED25519 "/home/julius/.ssh/id_ed25519" from agent: communication with agent failed\r\n' +
