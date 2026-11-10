@@ -231,7 +231,8 @@ export const PreviewClearProfileInput = Schema.Struct({
 export type PreviewClearProfileInput = typeof PreviewClearProfileInput.Type;
 
 export const PreviewListInput = Schema.Struct({
-  threadId: ThreadId,
+  /** Omitted lists every thread's tabs, which a reloaded desktop needs to find background tabs. */
+  threadId: Schema.optional(ThreadId),
 });
 export type PreviewListInput = typeof PreviewListInput.Type;
 

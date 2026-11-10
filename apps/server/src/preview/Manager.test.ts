@@ -137,6 +137,17 @@ it.layer(layer)("PreviewManager", (it) => {
       expect(events[1]!.revision).toBeGreaterThan(events[0]!.revision);
       expect(listed.revision).toBe(events[1]!.revision);
       expect(listed.sessions).toHaveLength(1);
+
+      const otherThreadId = freshThreadId();
+      const other = yield* manager.open({ threadId: otherThreadId, url: "http://localhost:5174" });
+      expect((yield* manager.list({ threadId })).sessions.map((s) => s.tabId)).toEqual([
+        opened.tabId,
+      ]);
+      const all = yield* manager.list({});
+      expect(all.revision).toBeGreaterThan(listed.revision);
+      expect(all.sessions.map((s) => s.tabId)).toEqual(
+        expect.arrayContaining([opened.tabId, other.tabId]),
+      );
     }),
   );
 

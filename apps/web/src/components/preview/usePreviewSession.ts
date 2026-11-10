@@ -13,6 +13,7 @@ import {
   previewStateAtom,
   readThreadPreviewState,
   reconcilePreviewServerSessions,
+  type ThreadPreviewState,
 } from "~/previewStateStore";
 import { isElectron } from "~/env";
 import { previewEnvironment } from "~/state/preview";
@@ -98,41 +99,62 @@ export function usePreviewSession(threadRef: ScopedThreadRef): void {
 
 const inactiveAtom = Atom.make(() => undefined);
 
-// Discover background tabs without listing every thread at startup. Keep each
-// sync while the thread has tabs so later events still arrive while chat is
-// absent, then release it so closed previews stop costing a list and a fan-out.
+// Discover threads with tabs from one environment-wide list, then from events,
+// without listing every thread. Keep each sync while the thread has tabs so
+// later events still arrive while chat is absent, then release it so closed
+// previews stop costing a list and a fan-out.
 const desktopHostedPreviewSyncAtom = Atom.family((environmentId: EnvironmentId) => {
+  const sessionsAtom = previewEnvironment.list({ environmentId, input: {} });
   const eventsAtom = previewEnvironment.events({ environmentId, input: {} });
   return Atom.make((get) => {
     const releaseByThreadId = new Map<string, () => void>();
     get.addFinalizer(() => {
       for (const release of releaseByThreadId.values()) release();
     });
+    const track = (threadId: string, serverEpoch: string, revision: number) => {
+      if (releaseByThreadId.has(threadId)) return;
+      const threadKey = scopedThreadKey(scopeThreadRef(environmentId, ThreadId.make(threadId)));
+      const stateAtom = previewStateAtom(threadKey);
+      const unmount = get.registry.mount(previewSessionSyncAtom(threadKey));
+      // The discovered tab may not be applied yet, or may already be closed. Release once a tab
+      // was seen and is gone, or a list at least as new as the discovery shows none. A pending
+      // local close can still be cancelled and restored.
+      let hadSessions = false;
+      const check = (state: ThreadPreviewState) => {
+        if (Object.keys(state.sessions).length > 0) {
+          hadSessions = true;
+          return;
+        }
+        if (state.suppressedTabIds.size > 0) return;
+        const listedSinceDiscovery =
+          state.listLoaded && state.serverEpoch === serverEpoch && state.serverRevision >= revision;
+        if (hadSessions || listedSinceDiscovery) release();
+      };
+      const unwatch = get.registry.subscribe(stateAtom, check);
+      function release() {
+        unwatch();
+        unmount();
+        releaseByThreadId.delete(threadId);
+      }
+      releaseByThreadId.set(threadId, release);
+      check(get.registry.get(stateAtom));
+    };
+    // A reloaded renderer gets no events for tabs that already exist, and the
+    // server moves a tab to its headless browser if no desktop attaches in time.
+    get.subscribe(
+      sessionsAtom,
+      (result) => {
+        if (!AsyncResult.isSuccess(result)) return;
+        const { serverEpoch, revision, sessions } = result.value;
+        for (const session of sessions) track(session.threadId, serverEpoch, revision);
+      },
+      { immediate: true },
+    );
     get.subscribe(
       eventsAtom,
       (result) => {
         if (!AsyncResult.isSuccess(result) || result.value.type === "closed") return;
-        const threadId = result.value.threadId;
-        if (releaseByThreadId.has(threadId)) return;
-        const threadKey = scopedThreadKey(scopeThreadRef(environmentId, ThreadId.make(threadId)));
-        const unmount = get.registry.mount(previewSessionSyncAtom(threadKey));
-        // The opening event may not be applied yet, so wait until a tab has
-        // been seen. A pending local close can still be cancelled and restored.
-        let hadSessions = false;
-        const unwatch = get.registry.subscribe(
-          previewStateAtom(threadKey),
-          (state) => {
-            if (Object.keys(state.sessions).length > 0) hadSessions = true;
-            else if (hadSessions && state.suppressedTabIds.size === 0) release();
-          },
-          { immediate: true },
-        );
-        function release() {
-          unwatch();
-          unmount();
-          releaseByThreadId.delete(threadId);
-        }
-        releaseByThreadId.set(threadId, release);
+        track(result.value.threadId, result.value.serverEpoch, result.value.revision);
       },
       { immediate: true },
     );
