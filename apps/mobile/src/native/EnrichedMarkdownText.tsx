@@ -9,6 +9,7 @@ import {
   markdownWithFileEmbeds,
   markdownForNativeParsing,
   markdownWithInlineFileLinks,
+  markdownWithListFencesAtTopLevel,
   markdownWithTableBreaks,
 } from "../lib/markdownDocument";
 import { isValidElement, useMemo, useState, type ReactElement, type ReactNode } from "react";
@@ -228,7 +229,7 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
       };
     }
     const content = markdownWithInlineFileLinks(
-      markdownForNativeParsing(props.markdown),
+      markdownWithListFencesAtTopLevel(markdownForNativeParsing(props.markdown)),
       ENRICHED_INLINE_FILE_LINK_REGEX,
     );
     const files = markdownWithFileEmbeds(content, fileEmbedLabel);

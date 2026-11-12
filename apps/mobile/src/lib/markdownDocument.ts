@@ -1,4 +1,4 @@
-import type { Root, RootContent } from "mdast";
+import type { Code, ListItem, Root, RootContent } from "mdast";
 import { unified, type Processor } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
@@ -451,6 +451,154 @@ function markdownWithWindowsPathDestinations(markdown: string): string {
   return applyMarkdownEdits(markdown, edits);
 }
 
+// A fence line with an indent or list marker before it, so possibly inside a list item.
+const MAYBE_LIST_FENCE = /^(?=[ \t]|[-*+\d])[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)*(?:`{3}|~{3})/m;
+
+interface SourceLine {
+  readonly start: number;
+  readonly text: string;
+}
+
+function sourceLines(markdown: string): SourceLine[] {
+  const lines: SourceLine[] = [];
+  let start = 0;
+  for (const ending of markdown.matchAll(/\r\n|\r|\n/g)) {
+    lines.push({ start, text: markdown.slice(start, ending.index) });
+    start = ending.index + ending[0].length;
+  }
+  lines.push({ start, text: markdown.slice(start) });
+  return lines;
+}
+
+function dedent(text: string, width: number): string {
+  return text.replace(new RegExp(`^[ \\t]{0,${width}}`), "");
+}
+
+/**
+ * The native renderer gives only top-level fences a header with copy and wrap buttons
+ * (software-mansion/enriched-markdown#925), so move fences out of list items. Text after a
+ * fence loses its item indent so it cannot become indented code, and the list that resumes
+ * after the item keeps its numbering.
+ */
+export function markdownWithListFencesAtTopLevel(markdown: string): string {
+  if (!MAYBE_LIST_FENCE.test(markdown)) return markdown;
+  const lines = sourceLines(markdown);
+  const eol = /\r\n|\r|\n/.exec(markdown)?.[0] ?? "\n";
+  const line = (point: { readonly line: number }) => point.line - 1;
+  // A block that its container closed ends at column 1 of the following line.
+  const lastLineOf = ({ position }: ListItem | Code) =>
+    position!.end.column === 1 && position!.end.line > position!.start.line
+      ? position!.end.line - 2
+      : line(position!.end);
+  const fromStart = ({ position }: ListItem | Code) =>
+    lines[line(position!.start)]!.text.slice(position!.start.column - 1);
+  const contentIndent = (item: ListItem) => {
+    const [, marker = "", spaces = "", rest = ""] =
+      /^([-*+]|\d{1,9}[.)])([ \t]*)(.*)/.exec(fromStart(item)) ?? [];
+    const width = rest === "" || spaces.length > 4 ? 1 : spaces.length;
+    return item.position!.start.column - 1 + marker.length + width;
+  };
+  const fencesIn = (
+    item: ListItem,
+    chain: readonly ListItem[],
+  ): Array<{ code: Code; chain: readonly ListItem[] }> =>
+    item.children.flatMap((child) => {
+      if (child.type === "list")
+        return child.children.flatMap((nested) => fencesIn(nested, [...chain, nested]));
+      if (child.type !== "code") return [];
+      return /^[ \t]{0,3}(?:`{3}|~{3})/.test(fromStart(child)) ? [{ code: child, chain }] : [];
+    });
+  const edits: MarkdownEdit[] = [];
+  for (const list of parser.parse(markdown).children) {
+    if (list.type !== "list") continue;
+    list.children.forEach((item, itemIndex) => {
+      const fences = fencesIn(item, [item]);
+      if (fences.length === 0) return;
+      const firstLine = line(fences[0]!.code.position!.start);
+      const following = list.children[itemIndex + 1];
+      const lastLine = Math.min(
+        lastLineOf(item),
+        following ? line(following.position!.start) - 1 : Infinity,
+      );
+      const emitted: string[] = [];
+      const separate = () => {
+        if (emitted.length > 0 && emitted.at(-1)!.trim() !== "") emitted.push("");
+      };
+      let chain: readonly ListItem[] = [];
+      let indents: number[] = [];
+      const dedentAfterFence = (index: number, text: string) => {
+        let depth = chain.length - 1;
+        while (depth > 0 && lastLineOf(chain[depth]!) < index) depth -= 1;
+        return dedent(text, indents[depth]!);
+      };
+      let keptPrefix = "";
+      let afterFence = false;
+      let next = 0;
+      for (let index = firstLine; index <= lastLine;) {
+        const source = lines[index]!;
+        const fence = fences[next];
+        if (fence && index === line(fence.code.position!.start)) {
+          const column = fence.code.position!.start.offset! - source.start;
+          const prefix = source.text.slice(0, column).trimEnd();
+          if (next === 0) {
+            keptPrefix = prefix.trim() ? prefix : "";
+            // The previous line only decides the blank line before the fence; it is dropped below.
+            emitted.push(keptPrefix || (lines[index - 1]?.text ?? ""));
+          } else if (prefix.trim()) {
+            separate();
+            emitted.push(dedentAfterFence(index, prefix));
+          }
+          separate();
+          const opening = source.text.slice(column).trimStart();
+          const fenceColumn = source.text.length - opening.length;
+          const end = lastLineOf(fence.code);
+          const run = /^(`+|~+)/.exec(opening)![1]!;
+          const closing = /^[ \t]*(`+|~+)[ \t]*$/.exec(lines[end]!.text)?.[1] ?? "";
+          const closed = end > index && closing[0] === run[0] && closing.length >= run.length;
+          emitted.push(opening);
+          for (let inner = index + 1; inner <= end; inner += 1) {
+            const text = lines[inner]!.text;
+            emitted.push(inner === end && closed ? text.trimStart() : dedent(text, fenceColumn));
+          }
+          // The item's end closed this fence; at the top level it would run on past the list.
+          if (!closed && lines.slice(end + 1).some(({ text }) => text.trim() !== ""))
+            emitted.push(run);
+          if (next === 0 && !keptPrefix) emitted.shift();
+          chain = fence.chain;
+          indents = chain.map(contentIndent);
+          afterFence = true;
+          next += 1;
+          index = end + 1;
+          continue;
+        }
+        const text = dedentAfterFence(index, source.text);
+        if (afterFence && text.trim() !== "") emitted.push("");
+        afterFence = false;
+        emitted.push(text);
+        index += 1;
+      }
+      // A paragraph can be interrupted by a bullet item but not by an item numbered past 1.
+      if ((afterFence || list.ordered) && (lines[lastLine + 1]?.text.trim() ?? "") !== "")
+        separate();
+      const start = lines[firstLine]!.start + keptPrefix.length;
+      const endLine = lines[lastLine]!;
+      edits.push({
+        start,
+        end: endLine.start + endLine.text.length,
+        content: emitted.join(eol).slice(keptPrefix.length),
+      });
+      if (!list.ordered || !following) return;
+      // Native lists number items from the first marker, so the resumed list keeps its count.
+      const markerStart = following.position!.start.offset!;
+      const number = /^\d+/.exec(fromStart(following))![0];
+      const expected = String((list.start ?? 1) + itemIndex + 1);
+      if (number !== expected)
+        edits.push({ start: markerStart, end: markerStart + number.length, content: expected });
+    });
+  }
+  return applyMarkdownEdits(markdown, edits);
+}
+
 // HTML wrappers can expose Markdown that wasn't in the first AST, so normalize them first.
 export function markdownForNativeParsing(markdown: string): string {
   return markdownWithWindowsPathDestinations(markdownWithHtml(markdown));
@@ -461,7 +609,11 @@ export function parseMarkdownDocument(markdown: string): Root {
 }
 
 export function markdownForNativeRendering(markdown: string, fileLink: RegExp): string {
-  return transformNativeMarkdown(markdownForNativeParsing(markdown), fileLink, true);
+  return transformNativeMarkdown(
+    markdownWithListFencesAtTopLevel(markdownForNativeParsing(markdown)),
+    fileLink,
+    true,
+  );
 }
 
 /** Native media slots only cover standalone images; nested file embeds must become links. */
