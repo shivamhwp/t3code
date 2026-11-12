@@ -9,7 +9,11 @@ import {
   type DesktopServerExposureMode,
   type DesktopServerExposureState,
 } from "@t3tools/contracts";
-import { isTailscaleIpv4Address, readTailscaleStatus } from "@t3tools/tailscale";
+import {
+  disableTailscaleServeRootTo,
+  isTailscaleIpv4Address,
+  readTailscaleStatus,
+} from "@t3tools/tailscale";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -587,11 +591,43 @@ export const make = Effect.gen(function* () {
           ),
         );
 
-      const nextState = yield* Ref.updateAndGet(stateRef, (current) => ({
-        ...current,
-        tailscaleServeEnabled: withinPolicy(result.settings).tailscaleServeEnabled,
-        tailscaleServePort: result.settings.tailscaleServePort,
-      }));
+      const [previous, nextState] = yield* Ref.modify(stateRef, (current) => {
+        const next = {
+          ...current,
+          tailscaleServeEnabled: withinPolicy(result.settings).tailscaleServeEnabled,
+          tailscaleServePort: result.settings.tailscaleServePort,
+        };
+        return [[current, next] as const, next];
+      });
+
+      // The backend removes its route as it stops, but on Windows it is killed without that
+      // chance, so remove the route it published while it still runs.
+      if (
+        previous.tailscaleServeEnabled &&
+        (!nextState.tailscaleServeEnabled ||
+          nextState.tailscaleServePort !== previous.tailscaleServePort)
+      ) {
+        const servePort = previous.tailscaleServePort;
+        yield* disableTailscaleServeRootTo({
+          servePort,
+          target: { host: DESKTOP_LOOPBACK_HOST, port: previous.port },
+        }).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+          Effect.flatMap((outcome) =>
+            outcome === "disabled"
+              ? Effect.logInfo("Tailscale Serve disabled", { servePort })
+              : outcome === "not-ours"
+                ? Effect.logInfo(
+                    "Tailscale Serve left on; its root route is not known to be ours",
+                    { servePort },
+                  )
+                : Effect.void,
+          ),
+          Effect.catch((cause) =>
+            Effect.logWarning("Failed to disable Tailscale Serve", { cause, servePort }),
+          ),
+        );
+      }
 
       return {
         state: toContractState(nextState),

@@ -512,6 +512,49 @@ export const disableTailscaleServe = Effect.fn("tailscale.disableTailscaleServe"
 export const disableTailscaleServeTcp = (servePort: number) =>
   runTailscaleCommand(tailscaleServeOffArgs({ servePort })!, TAILSCALE_SERVE_TIMEOUT);
 
+/**
+ * Removes the root route on `servePort` that `ensureTailscaleServe` added for the server bound at
+ * `target`. Another service may hold the root by now, or it may sit under a former name, where
+ * `off` would act on the current one; only ours goes. `not-ours` also covers unreadable routes.
+ */
+export const disableTailscaleServeRootTo = Effect.fn("tailscale.disableTailscaleServeRootTo")(
+  function* (input: {
+    readonly servePort: number;
+    readonly target: { readonly host: string; readonly port: number };
+  }) {
+    const found = yield* Effect.all(
+      [
+        readTailscaleServeRoutesTo(input.target),
+        readTailscaleStatus.pipe(
+          Effect.map((status) => status.magicDnsName?.toLowerCase()),
+          Effect.orElseSucceed(() => undefined),
+        ),
+      ],
+      { concurrency: 2 },
+    ).pipe(
+      Effect.map(([routes, currentName]) => {
+        const roots = routes.filter(
+          (route) => route.servePort === input.servePort && route.mount === "/",
+        );
+        if (roots.length === 0) return "none" as const;
+        return roots.some(
+          (route) =>
+            route.owner === undefined &&
+            route.ambiguous === undefined &&
+            currentName !== undefined &&
+            route.host?.toLowerCase() === currentName,
+        )
+          ? ("ours" as const)
+          : ("not-ours" as const);
+      }),
+      Effect.orElseSucceed(() => "not-ours" as const),
+    );
+    if (found !== "ours") return found;
+    yield* disableTailscaleServe({ servePort: input.servePort });
+    return "disabled" as const;
+  },
+);
+
 const TailscaleServeConfigJson = Schema.Struct({
   TCP: Schema.optional(
     Schema.Record(Schema.String, Schema.Struct({ TCPForward: Schema.optional(Schema.String) })),

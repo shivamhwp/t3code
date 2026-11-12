@@ -216,11 +216,9 @@ import * as ProjectHttp from "./project/http.ts";
 import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import {
-  disableTailscaleServe,
+  disableTailscaleServeRootTo,
   ensureTailscaleServe,
   readTailscaleServeRootHolders,
-  readTailscaleServeRoutesTo,
-  readTailscaleStatus,
 } from "@t3tools/tailscale";
 import * as ServerActivation from "./serverActivation.ts";
 
@@ -978,44 +976,22 @@ const layerMakeServer = Layer.unwrap(
             }),
             (configured) =>
               configured
-                ? Effect.all(
-                    [
-                      readTailscaleServeRoutesTo({
-                        host: configured.localHost,
-                        port: configured.localPort,
-                      }),
-                      readTailscaleStatus,
-                    ],
-                    { concurrency: 2 },
-                  ).pipe(
-                    // Another service may hold the root route by now, or it may sit under a
-                    // former name, where `off` would act on the current one; only ours goes.
-                    Effect.map(([routes, status]) =>
-                      routes.some(
-                        (route) =>
-                          route.servePort === configured.servePort &&
-                          route.mount === "/" &&
-                          route.owner === undefined &&
-                          route.ambiguous === undefined &&
-                          route.host?.toLowerCase() === status.magicDnsName?.toLowerCase(),
-                      ),
-                    ),
-                    Effect.orElseSucceed(() => false),
-                    Effect.flatMap((ours) =>
-                      ours
-                        ? disableTailscaleServe({ servePort: configured.servePort }).pipe(
-                            Effect.tap(() =>
-                              Effect.logInfo("Tailscale Serve disabled", {
-                                servePort: configured.servePort,
-                              }),
-                            ),
-                          )
-                        : Effect.logInfo(
-                            "Tailscale Serve left on; its root route is not known to be ours",
-                            {
-                              servePort: configured.servePort,
-                            },
-                          ),
+                ? disableTailscaleServeRootTo({
+                    servePort: configured.servePort,
+                    target: { host: configured.localHost, port: configured.localPort },
+                  }).pipe(
+                    // The desktop removes the route itself when Serve is turned off.
+                    Effect.flatMap((outcome) =>
+                      outcome === "disabled"
+                        ? Effect.logInfo("Tailscale Serve disabled", {
+                            servePort: configured.servePort,
+                          })
+                        : outcome === "not-ours"
+                          ? Effect.logInfo(
+                              "Tailscale Serve left on; its root route is not known to be ours",
+                              { servePort: configured.servePort },
+                            )
+                          : Effect.void,
                     ),
                     Effect.catch((cause) =>
                       Effect.logWarning("Failed to disable Tailscale Serve", {

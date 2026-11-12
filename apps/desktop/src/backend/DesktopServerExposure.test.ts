@@ -43,12 +43,16 @@ const tailnetNetworkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces = {
   ],
 };
 
-function layerMockSpawner(statusJson: string | (() => string) = "{}", onSpawn?: () => void) {
+function layerMockSpawner(
+  statusJson: string | ((args: ReadonlyArray<string>) => string) = "{}",
+  onSpawn?: (args: ReadonlyArray<string>) => void,
+) {
   return Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
-    ChildProcessSpawner.make(() =>
+    ChildProcessSpawner.make((command) =>
       Effect.sync(() => {
-        onSpawn?.();
+        const { args } = command as unknown as { readonly args: ReadonlyArray<string> };
+        onSpawn?.(args);
         return ChildProcessSpawner.makeHandle({
           pid: ChildProcessSpawner.ProcessId(1),
           exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
@@ -57,7 +61,7 @@ function layerMockSpawner(statusJson: string | (() => string) = "{}", onSpawn?: 
           unref: Effect.succeed(Effect.void),
           stdin: Sink.drain,
           stdout: Stream.make(
-            encoder.encode(typeof statusJson === "string" ? statusJson : statusJson()),
+            encoder.encode(typeof statusJson === "string" ? statusJson : statusJson(args)),
           ),
           stderr: Stream.empty,
           all: Stream.empty,
@@ -341,6 +345,59 @@ describe("DesktopServerExposure", () => {
         assert.equal(persisted.tailscaleServePort, 8443);
       }),
     ),
+  );
+
+  it.effect(
+    "turning Tailscale Serve off or moving its port removes this backend's root route",
+    () => {
+      const routeTo = (port: number, name = "box") => ({
+        [`${name}.tailnet.ts.net:443`]: {
+          Handlers: { "/": { Proxy: `http://127.0.0.1:${port}` } },
+        },
+        [`${name}.tailnet.ts.net:8443`]: {
+          Handlers: { "/": { Proxy: `http://127.0.0.1:${port}` } },
+        },
+      });
+      let web = routeTo(4173);
+      const offs: Array<ReadonlyArray<string>> = [];
+      return withHarness(
+        emptyNetworkInterfaces,
+        Effect.gen(function* () {
+          const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+          const settings = yield* DesktopAppSettings.DesktopAppSettings;
+
+          yield* settings.load;
+          yield* serverExposure.configureFromSettings({ port: 4173 });
+
+          yield* serverExposure.setTailscaleServeEnabled({ enabled: true, port: 443 });
+          yield* serverExposure.setTailscaleServeEnabled({ enabled: true, port: 8443 });
+          yield* serverExposure.setTailscaleServeEnabled({ enabled: false });
+          assert.deepEqual(offs, [
+            ["serve", "--https=443", "--set-path=/", "off"],
+            ["serve", "--https=8443", "--set-path=/", "off"],
+          ]);
+
+          // Another app's root route on the same port stays, and so does one under a former
+          // name, which `off` cannot reach.
+          for (const routes of [routeTo(9000), routeTo(4173, "old")]) {
+            web = routes;
+            yield* serverExposure.setTailscaleServeEnabled({ enabled: true, port: 443 });
+            yield* serverExposure.setTailscaleServeEnabled({ enabled: false });
+          }
+          assert.lengthOf(offs, 2);
+        }),
+        {},
+        layerMockSpawner(
+          (args) =>
+            args[0] === "serve"
+              ? JSON.stringify({ Web: web })
+              : `{"Self":{"DNSName":"box.tailnet.ts.net.","TailscaleIPs":[]}}`,
+          (args) => {
+            if (args.at(-1) === "off") offs.push(args);
+          },
+        ),
+      );
+    },
   );
 
   it.effect("keeps a Tailscale Serve change made while a mode change is saving", () =>
