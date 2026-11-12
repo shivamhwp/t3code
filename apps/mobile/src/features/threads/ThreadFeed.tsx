@@ -2683,6 +2683,22 @@ const THREAD_FEED_MAINTAIN_SCROLL_AT_END = {
   on: { dataChange: true, itemLayout: true, layout: true },
 } as const;
 
+// A list row, not the header: the header sits above alignItemsAtEnd's spacer, which would put
+// the blank space between the control and the rows it loads above.
+type HistoryControlRow = {
+  readonly type: "history-control";
+  readonly id: "thread-feed:history-control";
+  readonly controls: ThreadFeedHistoryControls;
+};
+type ThreadFeedListRow = GroupedThreadFeedRow | HistoryControlRow;
+
+const THREAD_FEED_MAINTAIN_VISIBLE_CONTENT_POSITION = {
+  data: true,
+  size: true,
+  // The control stays the top row, so anchoring on it would push the visible rows down by the page.
+  shouldRestorePosition: (row: ThreadFeedListRow) => row.type !== "history-control",
+};
+
 export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const { listRef, onIsAtEndChange, onHeaderMaterialVisibilityChange } = props;
   const workflowOpening = useWorkflowOpening(props.detailRef);
@@ -3343,6 +3359,16 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     setupAnchorIndex:
       props.worktreeSetup || props.setupWorkingStartedAt ? setupAnchorIndex : undefined,
   });
+  const listData: ReadonlyArray<ThreadFeedListRow> = props.historyControls
+    ? [
+        {
+          type: "history-control",
+          id: "thread-feed:history-control",
+          controls: props.historyControls,
+        },
+        ...groupedFeed,
+      ]
+    : groupedFeed;
   const { contentInsetEndAdjustment } = props;
   const attachList = (list: LegendListRef | null) => {
     listRef.current = list;
@@ -3350,7 +3376,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     if (list && bottom > 0) list.reportContentInset({ bottom });
   };
   const jumpIndex = jumpReady
-    ? presentedFeed.findIndex((entry) => entry.type === "message" && entry.id === jumpToMessageId)
+    ? listData.findIndex((entry) => entry.type === "message" && entry.id === jumpToMessageId)
     : null;
   const landJump = useEffectEvent((index: number) => {
     const list = listRef.current;
@@ -3380,7 +3406,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   };
 
   const anchoredEndSpace = resolveChatListAnchoredEndSpace(
-    presentedFeed,
+    listData,
     props.anchorMessageId,
     (entry) => (entry.type === "message" ? entry.id : null),
     { anchorOffset: anchorTopInset + CHAT_LIST_ANCHOR_OFFSET },
@@ -3479,7 +3505,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         const anchorTop = state.elementAtIndex(anchorIndex)?.getBoundingClientRect().top;
         const positions = new Map<string, number>();
         for (let i = state.startBuffered; i <= state.endBuffered; i++) {
-          const item = groupedFeed[i];
+          const item = listData[i];
           if (!item) continue;
           const displayed =
             disclosureMotionRef.current &&
@@ -3576,8 +3602,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   // Without this, every row above the viewport is assumed to be
   // estimatedItemSize tall, and scrolling up through unmeasured content
   // corrects each row's height as it mounts — the feed visibly jumps.
-  const getFixedItemSize = (entry: ThreadFeedRow) => {
-    if (entry.type === "guest-pending") return undefined;
+  const getFixedItemSize = (entry: ThreadFeedListRow) => {
+    if (entry.type === "guest-pending" || entry.type === "history-control") return undefined;
     if (entry.type === "html-render") {
       return htmlRenderRowHeight(htmlRenderFrameHeight(entry.render, contentWidth));
     }
@@ -3630,7 +3656,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     }
   }, [textSizeKey, contentWidth, hasHtmlRenders, listRef]);
 
-  const renderItem = (info: { item: GroupedThreadFeedRow; index: number }) => (
+  const renderFeedRow = (info: { item: GroupedThreadFeedRow; index: number }) => (
     <DisclosureRow
       key={info.item.id}
       itemKey={info.item.id}
@@ -3706,15 +3732,28 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             workspaceRoot: props.workspaceRoot,
             workflowOpening,
           })}
-          {props.worktreeSetup && info.index === setupAnchorIndex ? (
+          {props.worktreeSetup && info.item === groupedFeed[setupAnchorIndex] ? (
             <WorktreeSetupCard key={props.threadId} {...props.worktreeSetup} />
-          ) : props.setupWorkingStartedAt && info.index === setupAnchorIndex ? (
+          ) : props.setupWorkingStartedAt && info.item === groupedFeed[setupAnchorIndex] ? (
             <WorktreeWorkingHeader startedAt={props.setupWorkingStartedAt} />
           ) : null}
         </ThreadMediaVisibility>
       </MessageImageGalleryScope>
     </DisclosureRow>
   );
+  const renderItem = (info: { item: ThreadFeedListRow; index: number }) =>
+    info.item.type === "history-control" ? (
+      <DisclosureRow
+        key={info.item.id}
+        itemKey={info.item.id}
+        index={info.index}
+        layout={disclosureLayout}
+      >
+        <ThreadFeedLoadEarlierControl {...info.item.controls} />
+      </DisclosureRow>
+    ) : (
+      renderFeedRow({ item: info.item, index: info.index })
+    );
 
   if (props.contentPresentation.kind === "unavailable" && props.queuedMessages.length === 0) {
     return (
@@ -3755,8 +3794,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             {...(usesNativeAutomaticInsets ? { contentInset: { top: anchorTopInset } } : {})}
             freeze={props.freeze}
             maintainScrollAtEnd={jumpReady ? false : THREAD_FEED_MAINTAIN_SCROLL_AT_END}
-            maintainVisibleContentPosition
-            data={groupedFeed}
+            maintainVisibleContentPosition={THREAD_FEED_MAINTAIN_VISIBLE_CONTENT_POSITION}
+            data={listData}
             extraData={listAppearanceData}
             renderItem={renderItem}
             viewabilityConfig={THREAD_MEDIA_VIEWABILITY_CONFIG}
@@ -3804,9 +3843,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
                 {usesNativeAutomaticInsets ? null : <View style={{ height: topContentInset }} />}
                 {setupAnchorIndex < 0 && props.worktreeSetup ? (
                   <WorktreeSetupCard key={props.threadId} {...props.worktreeSetup} />
-                ) : null}
-                {props.historyControls ? (
-                  <ThreadFeedLoadEarlierControl {...props.historyControls} />
                 ) : null}
               </>
             }
