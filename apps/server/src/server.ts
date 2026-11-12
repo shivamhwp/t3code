@@ -980,7 +980,6 @@ const layerMakeServer = Layer.unwrap(
                     servePort: configured.servePort,
                     target: { host: configured.localHost, port: configured.localPort },
                   }).pipe(
-                    // The desktop removes the route itself when Serve is turned off.
                     Effect.flatMap((outcome) =>
                       outcome === "disabled"
                         ? Effect.logInfo("Tailscale Serve disabled", {

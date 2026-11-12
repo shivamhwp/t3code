@@ -11,6 +11,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -50,8 +51,14 @@ function layerMockSpawner(
   return Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make((command) =>
-      Effect.sync(() => {
-        const { args } = command as unknown as { readonly args: ReadonlyArray<string> };
+      Effect.gen(function* () {
+        if (
+          !ChildProcess.isStandardCommand(command) ||
+          !command.args.every((arg): arg is string => typeof arg === "string")
+        ) {
+          return yield* Effect.die("Expected a standard command with plain string arguments.");
+        }
+        const args = command.args;
         onSpawn?.(args);
         return ChildProcessSpawner.makeHandle({
           pid: ChildProcessSpawner.ProcessId(1),
