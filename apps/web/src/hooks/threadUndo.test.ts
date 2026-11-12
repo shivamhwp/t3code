@@ -27,3 +27,14 @@ describe("thread action ownership", () => {
     otherThread.finish();
   });
 });
+
+describe("settle Undo plan", () => {
+  it.each([
+    ["an anchored row", "2026-09-01T00:00:00.000Z", null],
+    ["a manually ordered row", null, "a1"],
+  ] as const)("restores %s to its place before the settle", (_, unsettledAt, activeOrderKey) => {
+    expect(ThreadUndo.planThreadUndo("settle", { unsettledAt, activeOrderKey })).toEqual([
+      { action: "unsettle", restore: { unsettledAt, activeOrderKey } },
+    ]);
+  });
+});

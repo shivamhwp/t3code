@@ -51,6 +51,8 @@ const threadShell = vi.hoisted(() => ({
   title: "Thread",
   pinOrderKey: "a0",
   pinnedAt: null as string | null,
+  unsettledAt: "2026-01-02T00:00:00.000Z",
+  activeOrderKey: "b0",
   snoozedUntil: null as string | null,
   projectId: "project",
   environmentId: "undo-env",
@@ -271,7 +273,14 @@ describe("settle and snooze Undo", () => {
     const actions = useThreadActions();
     await actions.settleThread(target);
     await currentUndo()();
-    expect(commands.unsettle).toHaveBeenCalledOnce();
+    expect(commands.unsettle).toHaveBeenCalledExactlyOnceWith({
+      environmentId: target.environmentId,
+      input: {
+        threadId: target.threadId,
+        reason: "user",
+        restore: { unsettledAt: "2026-01-02T00:00:00.000Z", activeOrderKey: "b0" },
+      },
+    });
     expect(commands.pin).toHaveBeenCalledExactlyOnceWith({
       environmentId: target.environmentId,
       input: { threadId: target.threadId, orderKey: "a0" },

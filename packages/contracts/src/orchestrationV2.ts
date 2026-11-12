@@ -3097,6 +3097,13 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     reason: Schema.Literal("user"),
+    // Undo of Settle returns the row to its place; older servers ignore it and float the row up.
+    restore: Schema.optional(
+      Schema.Struct({
+        unsettledAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+        activeOrderKey: Schema.NullOr(TrimmedNonEmptyString),
+      }),
+    ),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.snooze"),

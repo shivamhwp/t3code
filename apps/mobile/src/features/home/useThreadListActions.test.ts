@@ -26,7 +26,13 @@ const state = vi.hoisted(() => ({
   requests: [] as {
     action: string;
     environmentId: string;
-    input: { threadId: string; orderKey?: string; snoozedUntil?: string; reason?: string };
+    input: {
+      threadId: string;
+      orderKey?: string;
+      snoozedUntil?: string;
+      reason?: string;
+      restore?: object;
+    };
   }[],
   dialogs: [] as { onConfirm: () => void }[],
   alerts: [] as {
@@ -454,6 +460,7 @@ describe("thread action undo", () => {
       pinnedAt: "2026-09-02T00:00:00.000Z",
       pinOrderKey: "m",
       snoozedUntil: "2099-01-01T09:00:00.000Z",
+      unsettledAt: "2026-09-01T00:00:00.000Z",
     });
     expect(await useThreadListActions().settleThread(thread)).toBe(true);
     const undo = readThreadUndoNotice()!.undo;
@@ -466,6 +473,11 @@ describe("thread action undo", () => {
       "pin",
       "snooze",
     ]);
+    expect(state.requests[1]?.input).toEqual({
+      threadId: thread.id,
+      reason: "user",
+      restore: { unsettledAt: thread.unsettledAt, activeOrderKey: null },
+    });
     expect(state.requests[2]?.input).toEqual({ threadId: thread.id, orderKey: "m" });
     expect(state.requests[3]?.input).toEqual({
       threadId: thread.id,

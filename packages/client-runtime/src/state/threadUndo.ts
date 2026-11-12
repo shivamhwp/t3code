@@ -35,8 +35,13 @@ export function invalidate(kind: string, threadKey: string) {
   notify();
 }
 
+export interface ThreadActivePlacement {
+  readonly unsettledAt: string | null;
+  readonly activeOrderKey: string | null;
+}
+
 export type ThreadUndoStep =
-  | { readonly action: "unsettle" }
+  | { readonly action: "unsettle"; readonly restore?: ThreadActivePlacement }
   | { readonly action: "unsnooze" }
   | { readonly action: "pin"; readonly orderKey?: string }
   | { readonly action: "snooze"; readonly snoozedUntil: string };
@@ -49,6 +54,8 @@ export function planThreadUndo(
     readonly pinnedAt?: string | null;
     readonly pinOrderKey?: string | null;
     readonly snoozedUntil?: string | null;
+    readonly unsettledAt?: string | null;
+    readonly activeOrderKey?: string | null;
   } | null,
 ): ThreadUndoPlan {
   if (action === "snooze") return [{ action: "unsnooze" }];
@@ -62,7 +69,18 @@ export function planThreadUndo(
       ? [{ action: "snooze" as const, snoozedUntil: thread.snoozedUntil }]
       : [];
   if (action === "unpin") return [pin, ...snooze];
-  return [{ action: "unsettle" }, ...(thread?.pinnedAt != null ? [pin] : []), ...snooze];
+  const unsettle: ThreadUndoStep = {
+    action: "unsettle",
+    ...(thread != null
+      ? {
+          restore: {
+            unsettledAt: thread.unsettledAt ?? null,
+            activeOrderKey: thread.activeOrderKey ?? null,
+          },
+        }
+      : {}),
+  };
+  return [unsettle, ...(thread?.pinnedAt != null ? [pin] : []), ...snooze];
 }
 
 export async function executeThreadUndo<Result>(

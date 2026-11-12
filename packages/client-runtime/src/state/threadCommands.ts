@@ -493,7 +493,17 @@ export function createThreadEnvironmentAtoms<R, E>(
       ...thread,
       settledOverride: input.reason === "user" ? "active" : null,
       settledAt: null,
-      unsettledAt: thread.settledOverride === "active" ? (thread.unsettledAt ?? null) : now,
+      ...(input.restore && thread.settledOverride === "settled"
+        ? {
+            unsettledAt:
+              input.restore.unsettledAt === null
+                ? null
+                : DateTime.makeUnsafe(input.restore.unsettledAt),
+            activeOrderKey: input.restore.activeOrderKey,
+          }
+        : {
+            unsettledAt: thread.settledOverride === "active" ? (thread.unsettledAt ?? null) : now,
+          }),
     })),
     snooze: optimistic.wrap(commands.snooze, (thread, input, now, accepted) =>
       (!accepted &&

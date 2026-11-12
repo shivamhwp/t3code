@@ -32,6 +32,7 @@ import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2Pend
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
@@ -105,6 +106,10 @@ export type SettleThreadInput = ThreadCommandInput;
 
 export interface UnsettleThreadInput extends ThreadCommandInput {
   readonly reason: "user";
+  readonly restore?: {
+    readonly unsettledAt: string | null;
+    readonly activeOrderKey: string | null;
+  };
 }
 
 export interface PinThreadInput extends ThreadCommandInput {
@@ -629,6 +634,15 @@ export const unsettleThread = Effect.fn("EnvironmentCommands.unsettleThread")(fu
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
     reason: input.reason,
+    ...(input.restore && {
+      restore: {
+        unsettledAt:
+          input.restore.unsettledAt === null
+            ? null
+            : DateTime.makeUnsafe(input.restore.unsettledAt),
+        activeOrderKey: input.restore.activeOrderKey,
+      },
+    }),
   });
 });
 

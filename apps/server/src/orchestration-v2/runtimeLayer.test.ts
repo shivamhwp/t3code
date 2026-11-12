@@ -3253,6 +3253,41 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       );
       assert.deepEqual(activeShell?.unsettledAt, activeProjection.thread.unsettledAt);
 
+      for (const [step, restore] of [
+        ["keyless", { unsettledAt: null, activeOrderKey: null }],
+        [
+          "keyed",
+          { unsettledAt: activeProjection.thread.unsettledAt ?? null, activeOrderKey: "a1" },
+        ],
+      ] as const) {
+        yield* orchestrator.dispatch({
+          type: "thread.settle",
+          commandId: CommandId.make(`runtime-layer-lifecycle-undo-settle-${step}`),
+          threadId,
+        });
+        yield* TestClock.adjust("1 minute");
+        yield* orchestrator.dispatch({
+          type: "thread.unsettle",
+          commandId: CommandId.make(`runtime-layer-lifecycle-undo-unsettle-${step}`),
+          threadId,
+          reason: "user",
+          restore,
+        });
+        const restored = (yield* orchestrator.getThreadProjection(threadId)).thread;
+        assert.equal(restored.settledOverride, "active");
+        assert.deepEqual(restored.unsettledAt ?? null, restore.unsettledAt);
+        assert.equal(restored.activeOrderKey, restore.activeOrderKey);
+      }
+      yield* orchestrator.dispatch({
+        type: "thread.unsettle",
+        commandId: CommandId.make("runtime-layer-lifecycle-stale-undo"),
+        threadId,
+        reason: "user",
+        restore: { unsettledAt: null, activeOrderKey: "zz" },
+      });
+      const staleUndo = (yield* orchestrator.getThreadProjection(threadId)).thread;
+      assert.equal(staleUndo.activeOrderKey, "a1");
+
       yield* orchestrator.dispatch({
         type: "thread.settle",
         commandId: CommandId.make("runtime-layer-lifecycle-resettle"),

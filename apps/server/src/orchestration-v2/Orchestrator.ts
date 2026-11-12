@@ -4374,11 +4374,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
         case "thread.unsettle": {
           const alreadyPinnedActive = thread.settledOverride === "active";
+          const restore = thread.settledOverride === "settled" ? command.restore : undefined;
           return {
             ...thread,
             settledOverride: "active",
             settledAt: null,
-            unsettledAt: alreadyPinnedActive ? (thread.unsettledAt ?? null) : now,
+            unsettledAt: restore
+              ? restore.unsettledAt
+              : alreadyPinnedActive
+                ? (thread.unsettledAt ?? null)
+                : now,
+            ...(restore ? { activeOrderKey: restore.activeOrderKey } : {}),
             updatedAt: alreadyPinnedActive ? thread.updatedAt : now,
           };
         }
