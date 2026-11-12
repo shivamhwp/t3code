@@ -10,6 +10,7 @@ import {
 import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import {
   AuthOrchestrationOperateScope,
+  type ContextMenuSource,
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -115,7 +116,7 @@ export function useThreadActionMenu(input: {
     onError: (error) => failureToast("Failed to copy thread ID", error),
   });
 
-  const openMenu = (position: { x: number; y: number }) => {
+  const openMenu = (position: { x: number; y: number }, source?: ContextMenuSource) => {
     if (threadRef === null) return;
     void (async () => {
       const api = readLocalApi();
@@ -153,7 +154,7 @@ export function useThreadActionMenu(input: {
         canShareWithGuest,
         canTurnIntoProject: canTurnThreadIntoProject(threadRef),
       });
-      const clicked = await settlePromise(() => api.contextMenu.show(items, position));
+      const clicked = await settlePromise(() => api.contextMenu.show(items, position, source));
       if (clicked._tag === "Failure" || clicked.value === null) return;
       const action: ThreadActionMenuId = clicked.value;
       if (
