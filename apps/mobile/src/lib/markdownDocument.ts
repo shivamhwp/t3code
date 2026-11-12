@@ -470,8 +470,17 @@ function sourceLines(markdown: string): SourceLine[] {
   return lines;
 }
 
+// Removes `width` columns of leading whitespace; a tab spanning the cut keeps its rest as spaces.
 function dedent(text: string, width: number): string {
-  return text.replace(new RegExp(`^[ \\t]{0,${width}}`), "");
+  let column = 0;
+  let index = 0;
+  while (index < text.length && column < width && (text[index] === " " || text[index] === "\t")) {
+    const next = text[index] === "\t" ? column + 4 - (column % 4) : column + 1;
+    if (next > width) return " ".repeat(next - width) + text.slice(index + 1);
+    column = next;
+    index += 1;
+  }
+  return text.slice(index);
 }
 
 /**
@@ -514,6 +523,31 @@ export function markdownWithListFencesAtTopLevel(markdown: string): string {
     list.children.forEach((item, itemIndex) => {
       const fences = fencesIn(item, [item]);
       if (fences.length === 0) return;
+      // A nested ordered list resumes at the item after a lifted fence, so renumber that marker.
+      const resumed = new Map<number, { column: number; width: number; number: string }>();
+      const markNestedResumes = (parent: ListItem) => {
+        for (const child of parent.children) {
+          if (child.type !== "list") continue;
+          child.children.forEach((nested, nestedIndex) => {
+            const next = child.children[nestedIndex + 1];
+            if (child.ordered && next && fencesIn(nested, [nested]).length > 0) {
+              const markerLine = line(next.position!.start);
+              const column = next.position!.start.column - 1;
+              const digits = /^\d+/.exec(lines[markerLine]!.text.slice(column))![0];
+              const expected = String((child.start ?? 1) + nestedIndex + 1);
+              resumed.set(markerLine, { column, width: digits.length, number: expected });
+            }
+            markNestedResumes(nested);
+          });
+        }
+      };
+      markNestedResumes(item);
+      const renumber = (index: number, text: string) => {
+        const mark = resumed.get(index);
+        return mark && text.length > mark.column
+          ? text.slice(0, mark.column) + mark.number + text.slice(mark.column + mark.width)
+          : text;
+      };
       const firstLine = line(fences[0]!.code.position!.start);
       const following = list.children[itemIndex + 1];
       const lastLine = Math.min(
@@ -546,14 +580,16 @@ export function markdownWithListFencesAtTopLevel(markdown: string): string {
             emitted.push(keptPrefix || (lines[index - 1]?.text ?? ""));
           } else if (prefix.trim()) {
             separate();
-            emitted.push(dedentAfterFence(index, prefix));
+            emitted.push(dedentAfterFence(index, renumber(index, prefix)));
           }
           separate();
           const opening = source.text.slice(column).trimStart();
           const fenceColumn = source.text.length - opening.length;
           const end = lastLineOf(fence.code);
           const run = /^(`+|~+)/.exec(opening)![1]!;
-          const closing = /^[ \t]*(`+|~+)[ \t]*$/.exec(lines[end]!.text)?.[1] ?? "";
+          // Four or more columns past the fence's own indent is content, not a closing fence.
+          const closing =
+            /^ {0,3}(`+|~+)[ \t]*$/.exec(dedent(lines[end]!.text, fenceColumn))?.[1] ?? "";
           const closed = end > index && closing[0] === run[0] && closing.length >= run.length;
           emitted.push(opening);
           for (let inner = index + 1; inner <= end; inner += 1) {
@@ -571,7 +607,7 @@ export function markdownWithListFencesAtTopLevel(markdown: string): string {
           index = end + 1;
           continue;
         }
-        const text = dedentAfterFence(index, source.text);
+        const text = dedentAfterFence(index, renumber(index, source.text));
         if (afterFence && text.trim() !== "") emitted.push("");
         afterFence = false;
         emitted.push(text);

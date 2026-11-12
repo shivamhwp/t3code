@@ -26,6 +26,21 @@ describe("code fences inside list items", () => {
     expect(
       render("4. First\n   ```\n   a\n   ```\n5. Second\n   ```\n   b\n   ```\n6. Third"),
     ).toBe("4. First\n\n```\na\n```\n\n5. Second\n\n```\nb\n```\n\n6. Third");
+    expect(render("- Parent\n  1. Run\n     ```sh\n     x\n     ```\n  1. Continue\n- Done")).toBe(
+      "- Parent\n  1. Run\n\n```sh\nx\n```\n\n2. Continue\n- Done",
+    );
+  });
+
+  it("keeps the tab columns of code after a fence", () => {
+    expect(render("1. Run\n   ```python\n   if True:\n\t\tprint(1)\n   ```\n2. Next")).toBe(
+      "1. Run\n\n```python\nif True:\n \tprint(1)\n```\n\n2. Next",
+    );
+  });
+
+  it("keeps a closing-looking line indented four columns past the fence as code", () => {
+    expect(render("1. Run\n   ```md\n   text\n       ```\n2. Next")).toBe(
+      "1. Run\n\n```md\ntext\n    ```\n```\n\n2. Next",
+    );
   });
 
   it("keeps text after the fence as text rather than indented code", () => {
