@@ -29,6 +29,9 @@ const MAC_LOOKUP_TIMEOUT_MS = 5_000;
 
 const MAC_HELPER_STRIP_MAX_THICKNESS_RATIO = 0.25;
 
+// Small enough to be a tooltip floating inside its window; untitled dialogs are larger and kept.
+const MAC_FLOATING_HELPER_MAX_SIZE_RATIO = 0.25;
+
 const MacActiveWindowLookup = Schema.Struct({
   owner: Schema.Struct({
     name: Schema.String,
@@ -136,7 +139,13 @@ async function macActiveWindow(): Promise<ActiveWindow | undefined> {
           reference.bounds.x - bounds.x <=
             reference.bounds.width * MAC_HELPER_STRIP_MAX_THICKNESS_RATIO &&
           bounds.width <= bounds.height * MAC_HELPER_STRIP_MAX_THICKNESS_RATIO &&
-          bounds.width <= reference.bounds.width * MAC_HELPER_STRIP_MAX_THICKNESS_RATIO)
+          bounds.width <= reference.bounds.width * MAC_HELPER_STRIP_MAX_THICKNESS_RATIO) ||
+        (bounds.x >= reference.bounds.x &&
+          bounds.y >= reference.bounds.y &&
+          bounds.x + bounds.width <= reference.bounds.x + reference.bounds.width &&
+          bounds.y + bounds.height <= reference.bounds.y + reference.bounds.height &&
+          bounds.width <= reference.bounds.width * MAC_FLOATING_HELPER_MAX_SIZE_RATIO &&
+          bounds.height <= reference.bounds.height * MAC_FLOATING_HELPER_MAX_SIZE_RATIO)
       );
     });
   });

@@ -128,6 +128,15 @@ it.each([
       { id: 80, title: "Other document", bounds: { x: 0, y: 39, width: 1_800, height: 1_130 } },
     ],
   },
+  {
+    name: "a Chrome hover tooltip",
+    helpers: [{ id: 90, title: "", bounds: { x: 640, y: 412, width: 38, height: 22 } }],
+    content: {
+      id: 71,
+      title: "Video - YouTube",
+      bounds: { x: 0, y: 39, width: 1_800, height: 1_130 },
+    },
+  },
 ])("selects the content window behind $name", async ({ helpers, content, background = [] }) => {
   stubMacLookup(macLookup([...helpers, content, ...background]));
 
