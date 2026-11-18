@@ -137,6 +137,15 @@ it.each([
       bounds: { x: 0, y: 39, width: 1_800, height: 1_130 },
     },
   },
+  {
+    name: "a Chrome URL bubble overhanging the content window's corner",
+    helpers: [{ id: 90, title: "", bounds: { x: 21, y: 831, width: 152, height: 22 } }],
+    content: {
+      id: 71,
+      title: "SnapShot #38640 reproduction",
+      bounds: { x: 22, y: 52, width: 1_100, height: 800 },
+    },
+  },
 ])("selects the content window behind $name", async ({ helpers, content, background = [] }) => {
   stubMacLookup(macLookup([...helpers, content, ...background]));
 
