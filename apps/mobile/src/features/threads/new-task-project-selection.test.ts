@@ -156,7 +156,12 @@ describe("resolveEnvironmentProjectMatch", () => {
 
 describe("resolveDraftProjectSelection", () => {
   const projects = [makeProject("t3code"), makeProject("t3code-2")];
-  const draft = { incomingShareId: undefined, pickerClosed: false };
+  const draft = {
+    incomingShareId: undefined,
+    pickerClosed: false,
+    useLastProject: undefined,
+    lastProject: undefined,
+  };
 
   it("opens the picker instead of auto-selecting the only project", () => {
     expect(resolveDraftProjectSelection(null, projects, [makeScope(projects)], draft)).toEqual({
@@ -195,10 +200,59 @@ describe("resolveDraftProjectSelection", () => {
     const scopes = [makeScope([projects[0]!]), makeScope([projects[1]!])];
     expect(
       resolveDraftProjectSelection(null, projects, scopes, {
+        ...draft,
         incomingShareId: "share",
         pickerClosed: true,
       }),
     ).toEqual({ kind: "pick" });
+  });
+
+  it("starts shared content in the last-used project when that preference is on", () => {
+    const mac = makeProject("t3code", "mac");
+    const server = makeProject("t3code", "server");
+    const other = makeProject("other", "mac");
+    const archived = { ...makeProject("old", "mac"), archivedAt: "2026-01-01T00:00:00.000Z" };
+    const all = [mac, server, other, archived];
+    const scopes = [makeScope([mac, server]), makeScope([other])];
+    const share = (
+      useLastProject: boolean | undefined,
+      lastProject: { readonly environmentId: string; readonly projectId: string },
+    ) =>
+      resolveDraftProjectSelection(null, all, scopes, {
+        incomingShareId: "share",
+        pickerClosed: false,
+        useLastProject,
+        lastProject,
+      });
+    expect(share(undefined, { environmentId: "server", projectId: "t3code" })).toEqual({
+      kind: "select",
+      project: server,
+    });
+    expect(share(true, { environmentId: "mac", projectId: "other" })).toEqual({
+      kind: "select",
+      project: other,
+    });
+    expect(share(false, { environmentId: "server", projectId: "t3code" })).toEqual({
+      kind: "pick",
+    });
+    expect(share(undefined, { environmentId: "mac", projectId: "old" })).toEqual({ kind: "pick" });
+    expect(share(undefined, { environmentId: "mac", projectId: "gone" })).toEqual({
+      kind: "pick",
+    });
+    expect(
+      resolveDraftProjectSelection(null, all, scopes, {
+        ...draft,
+        lastProject: { environmentId: "server", projectId: "t3code" },
+      }),
+    ).toEqual({ kind: "pick" });
+    // A remembered project that is gone falls back to the sole-project rule.
+    expect(
+      resolveDraftProjectSelection(null, projects, [makeScope(projects)], {
+        ...draft,
+        incomingShareId: "share",
+        lastProject: { environmentId: "mac", projectId: "gone" },
+      }),
+    ).toEqual({ kind: "select", project: projects[0] });
   });
 });
 
