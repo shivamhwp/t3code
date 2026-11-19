@@ -98,6 +98,7 @@ import { newTaskFlowKey } from "./new-task-flow-state";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ConnectionStatusDot } from "../connection/ConnectionStatusDot";
 import { appAtomRegistry } from "../../state/atom-registry";
+import { mobilePreferencesAtom } from "../../state/preferences";
 
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 
@@ -365,6 +366,7 @@ export function NewTaskDraftScreen(props: {
     shareImportPhase !== "failed" &&
     shareImportPhase !== "cancelling";
   const contextImports = useAtomValue(composerContextImportsAtom);
+  const preferences = useAtomValue(mobilePreferencesAtom);
   const isImportingContext = flow.draftKey ? contextImports[flow.draftKey] === true : false;
   const isComposerInteractionLocked =
     isIncomingShareTransferPending || flow.submitting || isImportingContext;
@@ -472,6 +474,11 @@ export function NewTaskDraftScreen(props: {
       }
       return;
     }
+    // A share waits for the remembered project before it falls back to the picker.
+    if (props.incomingShareId !== undefined && AsyncResult.isInitial(preferences)) {
+      return;
+    }
+    const savedPreferences = AsyncResult.isSuccess(preferences) ? preferences.value : undefined;
 
     const selection = resolveDraftProjectSelection(
       selectedProjectKey,
@@ -480,6 +487,8 @@ export function NewTaskDraftScreen(props: {
       {
         incomingShareId: props.incomingShareId,
         pickerClosed: initialPickerRef.current === "open" && isFocused,
+        useLastProject: savedPreferences?.useLastProjectForNewThreads,
+        lastProject: savedPreferences?.lastThreadProject,
       },
     );
     if (selection.kind === "preserve") {
@@ -511,6 +520,7 @@ export function NewTaskDraftScreen(props: {
     props.incomingShareId,
     props.draftId,
     navigation,
+    preferences,
     selectedProject,
     selectedProjectKey,
     setProject,
