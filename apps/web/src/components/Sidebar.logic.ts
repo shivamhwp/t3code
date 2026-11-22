@@ -795,6 +795,15 @@ export function isTrailingDoubleClick(detail: number): boolean {
   return detail > 1;
 }
 
+// macOS keeps counting clicks across rows, so fast clicks on different rows carry detail > 1.
+export function isTrailingRowClick(
+  detail: number,
+  previousRowKey: string | null,
+  rowKey: string,
+): boolean {
+  return isTrailingDoubleClick(detail) && previousRowKey === rowKey;
+}
+
 function nodeClosest(node: object | null, selector: string): unknown {
   if (node === null || !("closest" in node) || typeof node.closest !== "function") return null;
   return node.closest(selector);

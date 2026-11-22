@@ -12,6 +12,7 @@ import {
   deleteSelectedThreadEntries,
   getFallbackThreadIdAfterDelete,
   hasUnseenCompletion,
+  isTrailingRowClick,
   orderItemsByPreferredIds,
   pinOrderKeyBetween,
   resolveSidebarSweepKeys,
@@ -1737,6 +1738,23 @@ describe("resolveSidebarFolderDot", () => {
     expect(resolveSidebarFolderDot([working, unread])).toBe("unread");
     expect(resolveSidebarFolderDot([unread, limited])).toBe("attention");
   });
+});
+
+describe("isTrailingRowClick", () => {
+  it.each([
+    { detail: 1, previous: "a", row: "a", suppressed: false },
+    { detail: 1, previous: "a", row: "b", suppressed: false },
+    { detail: 2, previous: "a", row: "a", suppressed: true },
+    { detail: 2, previous: "a", row: "b", suppressed: false },
+    { detail: 3, previous: "a", row: "a", suppressed: true },
+    { detail: 3, previous: "b", row: "c", suppressed: false },
+    { detail: 2, previous: null, row: "a", suppressed: false },
+  ])(
+    "detail $detail after $previous on $row is suppressed: $suppressed",
+    ({ detail, previous, row, suppressed }) => {
+      expect(isTrailingRowClick(detail, previous, row)).toBe(suppressed);
+    },
+  );
 });
 
 describe("shouldCreateNewThreadInCurrentProject", () => {

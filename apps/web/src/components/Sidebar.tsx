@@ -190,7 +190,7 @@ import {
   filterSidebarProjectScopeItems,
   firstValidTimestampMs,
   isSidebarNestedLinkClick,
-  isTrailingDoubleClick,
+  isTrailingRowClick,
   orderItemsByPreferredIds,
   planSidebarThreadDrop,
   reduceSidebarProjectScopeMenuState,
@@ -1067,6 +1067,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     keys: ReadonlySet<string>;
   } | null>(null);
   const snoozingThreadKeysRef = useRef(new Set<string>());
+  const lastThreadClickKeyRef = useRef<string | null>(null);
   const removeFromSelection = useThreadSelectionStore((s) => s.removeFromSelection);
   const openAddProjectCommandPalette = () => openCommandPalette({ open: "add-project" });
   const routeThreadRef = resolveActiveThreadRouteRef(
@@ -1586,9 +1587,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       rangeSelectTo(threadKey, orderedThreadKeysRef.current);
       return;
     }
-    if (isTrailingDoubleClick(event.detail)) {
+    if (isTrailingRowClick(event.detail, lastThreadClickKeyRef.current, threadKey)) {
       return;
     }
+    lastThreadClickKeyRef.current = threadKey;
     navigateToThread(threadRef);
   };
 
