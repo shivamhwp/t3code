@@ -817,6 +817,7 @@ async function draftWithPrompt(
 }
 
 function useOpenExistingProject(environment: EnvironmentOption | null) {
+  const navigation = useNavigation();
   const openNewTaskDraft = useOpenNewTaskDraft();
   const updateProject = useAtomCommand(projectEnvironment.update, {
     label: "project unarchive",
@@ -843,7 +844,17 @@ function useOpenExistingProject(environment: EnvironmentOption | null) {
     ) {
       return false;
     }
-    const prompt = clone?.prompt;
+    let draftId: string | null = null;
+    if (clone?.prompt) {
+      // Rejects when the prompt cannot be stored, so the caller does not open the project without it.
+      await waitForComposerDraftsLoaded();
+      if (!isActiveRoute(navigation, originRoute)) return true;
+      draftId = createNewTaskDraft({
+        environmentId: existing.environmentId,
+        projectId: existing.id,
+      });
+      setComposerDraftText(draftId, clone.prompt);
+    }
     // Adding an archived project's folder again brings the project back.
     const unarchived =
       existing.archivedAt == null ||
@@ -864,12 +875,7 @@ function useOpenExistingProject(environment: EnvironmentOption | null) {
         environmentId: existing.environmentId,
         projectId: existing.id,
         title: existing.title,
-        ...(prompt
-          ? await draftWithPrompt(existing.environmentId, existing.id, prompt).then(
-              (draftId) => ({ draftId }),
-              () => ({}),
-            )
-          : {}),
+        ...(draftId === null ? {} : { draftId }),
       },
       originRoute,
     );
@@ -1629,12 +1635,14 @@ export function AddProjectDestinationScreen(props: {
 
     const originRoute = getActiveRoute(navigation);
     setIsSubmitting(true);
-    if (
-      await openExistingProject(await resolveHomePath(resolved.path), originRoute, {
-        remoteUrl,
-        prompt: prompt ?? null,
-      })
-    ) {
+    const handled = await openExistingProject(await resolveHomePath(resolved.path), originRoute, {
+      remoteUrl,
+      prompt: prompt ?? null,
+    }).catch(() => {
+      setError(m(msg("Drafts could not be loaded, so the prompt was not added.")));
+      return true;
+    });
+    if (handled) {
       setIsSubmitting(false);
       return;
     }
